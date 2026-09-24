@@ -38,9 +38,11 @@ import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.McpSyncCompletionRepository;
 import io.modelcontextprotocol.modern.server.feature.McpSyncPromptRepository;
 import io.modelcontextprotocol.modern.server.feature.McpSyncResourceRepository;
+import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.PromptsFeature;
 import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
+import io.modelcontextprotocol.modern.server.feature.SubscriptionsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema.Implementation;
@@ -90,17 +92,20 @@ public final class McpServer implements McpRequestHandler {
 
 	private final RequestStateCodec requestStateCodec;
 
+	private final SubscriptionsFeature subscriptionsFeature;
+
 	private static final Set<String> MRTR_ELIGIBLE_METHODS = Set.of(McpSchema.METHOD_TOOLS_CALL,
 			McpSchema.METHOD_RESOURCES_READ, McpSchema.METHOD_PROMPTS_GET);
 
 	private McpServer(Implementation serverInfo, List<String> supportedVersions, McpJsonMapper jsonMapper,
 			McpRouter router, List<McpFilter> filters, Set<String> inputRequiredMethods,
-			RequestStateCodec requestStateCodec) {
+			RequestStateCodec requestStateCodec, SubscriptionsFeature subscriptionsFeature) {
 		this.serverInfo = serverInfo;
 		this.supportedVersions = supportedVersions;
 		this.jsonMapper = jsonMapper;
 		this.inputRequiredMethods = inputRequiredMethods;
 		this.requestStateCodec = requestStateCodec;
+		this.subscriptionsFeature = subscriptionsFeature;
 		McpRouter chain = router;
 		for (int i = filters.size() - 1; i >= 0; i--) {
 			McpFilter filter = filters.get(i);
@@ -112,6 +117,16 @@ public final class McpServer implements McpRequestHandler {
 
 	public static Builder builder() {
 		return new Builder();
+	}
+
+	/**
+	 * Ends every active {@code subscriptions/listen} stream with a graceful
+	 * {@code complete} result. A no-op if no {@link McpChangeFeed} was registered.
+	 */
+	public void closeGracefully() {
+		if (this.subscriptionsFeature != null) {
+			this.subscriptionsFeature.closeGracefully();
+		}
 	}
 
 	@Override
@@ -381,6 +396,8 @@ public final class McpServer implements McpRequestHandler {
 
 		private RequestStateCodec requestStateCodec;
 
+		private McpChangeFeed changeFeed;
+
 		private Builder() {
 		}
 
@@ -457,6 +474,17 @@ public final class McpServer implements McpRequestHandler {
 			return this;
 		}
 
+		/**
+		 * Registers {@code subscriptions/listen}, backed by {@code feed}. Must see the
+		 * final set of registered primitives to decide which change types it can honour,
+		 * so it is wired up last, after every other feature.
+		 */
+		public Builder subscriptions(McpChangeFeed feed) {
+			Assert.notNull(feed, "feed must not be null");
+			this.changeFeed = feed;
+			return this;
+		}
+
 		public Builder filter(McpFilter filter) {
 			Assert.notNull(filter, "filter must not be null");
 			this.filters.add(filter);
@@ -520,6 +548,17 @@ public final class McpServer implements McpRequestHandler {
 				feature.capabilities(capabilitiesBuilder);
 				inputRequiredMethods.addAll(feature.inputRequiredMethods());
 			}
+
+			// Subscriptions is wired up last: which change types it can honour depends
+			// on the final set of registered primitives.
+			SubscriptionsFeature subscriptionsFeature = null;
+			if (this.changeFeed != null) {
+				subscriptionsFeature = new SubscriptionsFeature(this.changeFeed, mapper, capabilitiesBuilder.hasTools(),
+						capabilitiesBuilder.hasPrompts(), capabilitiesBuilder.hasResources());
+				combined = combined.and(subscriptionsFeature.router());
+				subscriptionsFeature.capabilities(capabilitiesBuilder);
+			}
+
 			ServerCapabilities capabilities = capabilitiesBuilder.build();
 
 			DiscoverFeature discoverFeature = new DiscoverFeature(this.supportedVersions, capabilities,
@@ -530,7 +569,7 @@ public final class McpServer implements McpRequestHandler {
 					: HmacRequestStateCodec.builder().jsonMapper(mapper).build();
 
 			return new McpServer(this.serverInfo, this.supportedVersions, mapper, combined, List.copyOf(this.filters),
-					Set.copyOf(inputRequiredMethods), codec);
+					Set.copyOf(inputRequiredMethods), codec, subscriptionsFeature);
 		}
 
 	}

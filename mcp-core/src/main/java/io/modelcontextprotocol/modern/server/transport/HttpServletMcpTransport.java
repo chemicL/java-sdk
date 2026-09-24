@@ -91,9 +91,15 @@ public class HttpServletMcpTransport extends HttpServlet {
 		return new Builder(requestHandler);
 	}
 
-	/** Stop accepting new requests. Does not interrupt in-flight streams. */
+	/**
+	 * Stop accepting new requests. If the request handler is a {@link McpServer}, also
+	 * asks it to end active {@code subscriptions/listen} streams gracefully.
+	 */
 	public void closeGracefully() {
 		this.closing = true;
+		if (this.requestHandler instanceof io.modelcontextprotocol.modern.server.McpServer server) {
+			server.closeGracefully();
+		}
 	}
 
 	@Override
