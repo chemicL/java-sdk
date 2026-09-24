@@ -19,9 +19,13 @@ import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
+import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities.Elicitation;
+import io.modelcontextprotocol.modern.McpSchema.ElicitUrlRequest;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.InputRequest;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.UnsupportedProtocolVersionData;
@@ -84,12 +88,19 @@ public final class McpServer implements McpRequestHandler {
 
 	private final Set<String> inputRequiredMethods;
 
+	private final RequestStateCodec requestStateCodec;
+
+	private static final Set<String> MRTR_ELIGIBLE_METHODS = Set.of(McpSchema.METHOD_TOOLS_CALL,
+			McpSchema.METHOD_RESOURCES_READ, McpSchema.METHOD_PROMPTS_GET);
+
 	private McpServer(Implementation serverInfo, List<String> supportedVersions, McpJsonMapper jsonMapper,
-			McpRouter router, List<McpFilter> filters, Set<String> inputRequiredMethods) {
+			McpRouter router, List<McpFilter> filters, Set<String> inputRequiredMethods,
+			RequestStateCodec requestStateCodec) {
 		this.serverInfo = serverInfo;
 		this.supportedVersions = supportedVersions;
 		this.jsonMapper = jsonMapper;
 		this.inputRequiredMethods = inputRequiredMethods;
+		this.requestStateCodec = requestStateCodec;
 		McpRouter chain = router;
 		for (int i = filters.size() - 1; i >= 0; i--) {
 			McpFilter filter = filters.get(i);
@@ -154,12 +165,23 @@ public final class McpServer implements McpRequestHandler {
 		}
 		Object progressToken = meta.get(MetaKeys.PROGRESS_TOKEN);
 		String primitiveName = extractPrimitiveName(paramsMap);
+		boolean retry = paramsMap.get("inputResponses") != null || paramsMap.get("requestState") != null;
 
 		McpRequestContext ctx = new McpRequestContext(id, request.method(), protocolVersion, clientCapabilities,
-				clientInfo, logLevel, progressToken, primitiveName, meta, transportContext);
+				clientInfo, logLevel, progressToken, primitiveName, meta, transportContext, retry);
+
+		Map<String, Object> effectiveParams = paramsMap;
+		if (retry && MRTR_ELIGIBLE_METHODS.contains(request.method())) {
+			Object requestStateRaw = paramsMap.get("requestState");
+			if (requestStateRaw instanceof String sealed) {
+				effectiveParams = new LinkedHashMap<>(paramsMap);
+				effectiveParams.put("requestState", this.requestStateCodec.open(ctx, sealed));
+			}
+		}
+		Object finalParams = effectiveParams;
 
 		return this.dispatchChain.route(ctx)
-			.map(handler -> dispatch(ctx, handler, request.params()))
+			.map(handler -> dispatch(ctx, handler, finalParams))
 			.switchIfEmpty(Mono.fromSupplier(() -> unaryErrorInvocation(id, ErrorCodes.METHOD_NOT_FOUND,
 					"Method not found: " + request.method(), null)))
 			.onErrorResume(err -> Mono.just(unaryErrorInvocation(id, err)));
@@ -194,10 +216,13 @@ public final class McpServer implements McpRequestHandler {
 	}
 
 	private JSONRPCResponse mapResultToResponse(McpRequestContext ctx, Result result) {
-		if (result instanceof InputRequiredResult && !this.inputRequiredMethods.contains(ctx.method())) {
-			throw McpError.builder(ErrorCodes.INTERNAL_ERROR)
-				.message("Method '" + ctx.method() + "' must not answer with an input-required result")
-				.build();
+		if (result instanceof InputRequiredResult inputRequired) {
+			if (!this.inputRequiredMethods.contains(ctx.method())) {
+				throw McpError.builder(ErrorCodes.INTERNAL_ERROR)
+					.message("Method '" + ctx.method() + "' must not answer with an input-required result")
+					.build();
+			}
+			result = sealAndCheck(ctx, inputRequired);
 		}
 		Map<String, Object> resultMap = new LinkedHashMap<>(this.jsonMapper.convertValue(result, MAP_TYPE_REF));
 		Map<String, Object> resultMeta = new LinkedHashMap<>();
@@ -207,7 +232,66 @@ public final class McpServer implements McpRequestHandler {
 		}
 		resultMeta.put(MetaKeys.SERVER_INFO, this.serverInfo);
 		resultMap.put("_meta", resultMeta);
+		// A retry's response carries fulfilled MRTR state, never a cacheable snapshot.
+		if (ctx.isRetry()) {
+			resultMap.remove("ttlMs");
+			resultMap.remove("cacheScope");
+		}
 		return JSONRPCResponse.result(ctx.requestId(), resultMap);
+	}
+
+	/**
+	 * Verifies every {@code inputRequests} entry is covered by a client-declared
+	 * capability, then seals {@code requestState} for the wire.
+	 */
+	private InputRequiredResult sealAndCheck(McpRequestContext ctx, InputRequiredResult inputRequired) {
+		if (inputRequired.inputRequests() != null) {
+			boolean needsElicitForm = false;
+			boolean needsElicitUrl = false;
+			boolean needsSampling = false;
+			boolean needsRoots = false;
+			for (InputRequest inputRequest : inputRequired.inputRequests().values()) {
+				switch (inputRequest.method()) {
+					case McpSchema.METHOD_ELICITATION_CREATE -> {
+						if (inputRequest.params() instanceof ElicitUrlRequest) {
+							needsElicitUrl = needsElicitUrl || !ctx.clientCapabilities().supportsElicitationUrl();
+						}
+						else {
+							needsElicitForm = needsElicitForm || !ctx.clientCapabilities().supportsElicitationForm();
+						}
+					}
+					case McpSchema.METHOD_SAMPLING_CREATE_MESSAGE ->
+						needsSampling = needsSampling || !ctx.clientCapabilities().supportsSampling();
+					case McpSchema.METHOD_ROOTS_LIST ->
+						needsRoots = needsRoots || !ctx.clientCapabilities().supportsRoots();
+					default -> {
+					}
+				}
+			}
+			if (needsElicitForm || needsElicitUrl || needsSampling || needsRoots) {
+				ClientCapabilities.Builder missing = ClientCapabilities.builder();
+				if (needsElicitForm || needsElicitUrl) {
+					missing.elicitation(new Elicitation(needsElicitForm ? new Elicitation.Form() : null,
+							needsElicitUrl ? new Elicitation.Url() : null));
+				}
+				if (needsSampling) {
+					missing.sampling();
+				}
+				if (needsRoots) {
+					missing.roots();
+				}
+				throw McpError.builder(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY)
+					.message("Missing required client capability for MRTR input request")
+					.data(new MissingRequiredClientCapabilityData(missing.build()))
+					.build();
+			}
+		}
+		if (inputRequired.requestState() == null) {
+			return inputRequired;
+		}
+		String sealed = this.requestStateCodec.seal(ctx, inputRequired.requestState());
+		return new InputRequiredResult(inputRequired.inputRequests(), sealed, inputRequired.resultType(),
+				inputRequired.meta());
 	}
 
 	private JSONRPCResponse errorResponse(Object id, Throwable throwable) {
@@ -295,6 +379,8 @@ public final class McpServer implements McpRequestHandler {
 
 		private Function<McpJsonMapper, McpFeature> completionsFeatureFactory;
 
+		private RequestStateCodec requestStateCodec;
+
 		private Builder() {
 		}
 
@@ -378,6 +464,16 @@ public final class McpServer implements McpRequestHandler {
 		}
 
 		/**
+		 * The codec used to seal/open MRTR {@code requestState}. Defaults to
+		 * {@link HmacRequestStateCodec#builder()}{@code .build()}.
+		 */
+		public Builder requestStateCodec(RequestStateCodec requestStateCodec) {
+			Assert.notNull(requestStateCodec, "requestStateCodec must not be null");
+			this.requestStateCodec = requestStateCodec;
+			return this;
+		}
+
+		/**
 		 * Default caching hints applied by features that don't set their own. Never
 		 * default {@code cacheScope} to {@code PUBLIC}: doing so lets any client, gateway
 		 * or proxy reuse a response across access tokens.
@@ -430,8 +526,11 @@ public final class McpServer implements McpRequestHandler {
 					this.instructions, this.defaultTtlMs, this.defaultCacheScope);
 			combined = discoverFeature.router().and(combined);
 
+			RequestStateCodec codec = this.requestStateCodec != null ? this.requestStateCodec
+					: HmacRequestStateCodec.builder().jsonMapper(mapper).build();
+
 			return new McpServer(this.serverInfo, this.supportedVersions, mapper, combined, List.copyOf(this.filters),
-					Set.copyOf(inputRequiredMethods));
+					Set.copyOf(inputRequiredMethods), codec);
 		}
 
 	}

@@ -43,9 +43,11 @@ public final class McpRequestContext {
 
 	private final McpTransportContext transportContext;
 
+	private final boolean retry;
+
 	McpRequestContext(Object requestId, String method, String protocolVersion, ClientCapabilities clientCapabilities,
 			Implementation clientInfo, LoggingLevel logLevel, Object progressToken, String primitiveName,
-			Map<String, Object> meta, McpTransportContext transportContext) {
+			Map<String, Object> meta, McpTransportContext transportContext, boolean retry) {
 		Assert.notNull(requestId, "requestId must not be null");
 		Assert.hasText(method, "method must not be empty");
 		Assert.hasText(protocolVersion, "protocolVersion must not be empty");
@@ -60,6 +62,7 @@ public final class McpRequestContext {
 		this.primitiveName = primitiveName;
 		this.meta = meta == null ? Map.of() : meta;
 		this.transportContext = transportContext == null ? McpTransportContext.EMPTY : transportContext;
+		this.retry = retry;
 	}
 
 	/** The JSON-RPC id of the request being served. */
@@ -114,6 +117,15 @@ public final class McpRequestContext {
 	/** The transport-level context (headers, connection info, ...). */
 	public McpTransportContext transportContext() {
 		return this.transportContext;
+	}
+
+	/**
+	 * Whether this request is an MRTR retry, i.e. its params carried
+	 * {@code inputResponses} or {@code requestState}. Results for a retry MUST NOT be
+	 * cached.
+	 */
+	public boolean isRetry() {
+		return this.retry;
 	}
 
 	/**
