@@ -1,0 +1,135 @@
+/*
+ * Copyright 2026-2026 the original author or authors.
+ */
+
+package io.modelcontextprotocol.modern.server;
+
+import java.util.Map;
+
+import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
+import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
+import io.modelcontextprotocol.spec.McpError;
+import io.modelcontextprotocol.spec.McpSchema.Implementation;
+import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
+import io.modelcontextprotocol.util.Assert;
+
+/**
+ * The per-request view a modern handler sees. Nothing here is ever cached across
+ * requests; the protocol is stateless, so a new context is built for every dispatch.
+ *
+ * @author Dariusz Jędrzejczyk
+ */
+public final class McpRequestContext {
+
+	private final Object requestId;
+
+	private final String method;
+
+	private final String protocolVersion;
+
+	private final ClientCapabilities clientCapabilities;
+
+	private final Implementation clientInfo;
+
+	private final LoggingLevel logLevel;
+
+	private final Object progressToken;
+
+	private final String primitiveName;
+
+	private final Map<String, Object> meta;
+
+	private final McpTransportContext transportContext;
+
+	McpRequestContext(Object requestId, String method, String protocolVersion, ClientCapabilities clientCapabilities,
+			Implementation clientInfo, LoggingLevel logLevel, Object progressToken, String primitiveName,
+			Map<String, Object> meta, McpTransportContext transportContext) {
+		Assert.notNull(requestId, "requestId must not be null");
+		Assert.hasText(method, "method must not be empty");
+		Assert.hasText(protocolVersion, "protocolVersion must not be empty");
+		Assert.notNull(clientCapabilities, "clientCapabilities must not be null");
+		this.requestId = requestId;
+		this.method = method;
+		this.protocolVersion = protocolVersion;
+		this.clientCapabilities = clientCapabilities;
+		this.clientInfo = clientInfo;
+		this.logLevel = logLevel;
+		this.progressToken = progressToken;
+		this.primitiveName = primitiveName;
+		this.meta = meta == null ? Map.of() : meta;
+		this.transportContext = transportContext == null ? McpTransportContext.EMPTY : transportContext;
+	}
+
+	/** The JSON-RPC id of the request being served. */
+	public Object requestId() {
+		return this.requestId;
+	}
+
+	/** The JSON-RPC method being served, e.g. {@code tools/call}. */
+	public String method() {
+		return this.method;
+	}
+
+	/** The protocol version declared in {@code _meta} for this request. */
+	public String protocolVersion() {
+		return this.protocolVersion;
+	}
+
+	/** The client capabilities declared in {@code _meta} for this request. */
+	public ClientCapabilities clientCapabilities() {
+		return this.clientCapabilities;
+	}
+
+	/** The client info declared in {@code _meta}, if any. Display/logging only. */
+	public Implementation clientInfo() {
+		return this.clientInfo;
+	}
+
+	/** The per-request log level, or {@code null} if the request declared none. */
+	public LoggingLevel logLevel() {
+		return this.logLevel;
+	}
+
+	/** The progress token, or {@code null} if the request declared none. */
+	public Object progressToken() {
+		return this.progressToken;
+	}
+
+	/**
+	 * The {@code name} (for tools/prompts) or {@code uri} (for resources) the request
+	 * targets, or {@code null} if the method has no such primitive. Used by
+	 * {@code RequestStateCodec} to bind sealed {@code requestState} to the primitive.
+	 */
+	public String primitiveName() {
+		return this.primitiveName;
+	}
+
+	/** The raw {@code _meta} map for this request. */
+	public Map<String, Object> meta() {
+		return this.meta;
+	}
+
+	/** The transport-level context (headers, connection info, ...). */
+	public McpTransportContext transportContext() {
+		return this.transportContext;
+	}
+
+	/**
+	 * Throw {@code -32021} ({@code MissingRequiredClientCapability}) unless
+	 * {@code present} is {@code true}.
+	 * @param present whether the client declared the capability this handler needs
+	 * @param required the capabilities object describing what was missing, echoed back in
+	 * the error's {@code data.requiredCapabilities}
+	 */
+	public void requireCapability(boolean present, ClientCapabilities required) {
+		if (!present) {
+			throw McpError.builder(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY)
+				.message("Missing required client capability")
+				.data(new MissingRequiredClientCapabilityData(required))
+				.build();
+		}
+	}
+
+}
