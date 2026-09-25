@@ -18,7 +18,7 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpOutcome;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpRouter;
 import io.modelcontextprotocol.spec.McpError;
@@ -118,12 +118,12 @@ public final class ResourcesFeature implements McpFeature {
 		if (handler instanceof AsyncResourceHandler.Streaming streaming) {
 			return (McpHandler.Streaming) (ctx, params, notifier) -> {
 				ReadResourceRequest request = this.jsonMapper.convertValue(params, ReadResourceRequest.class);
-				return streaming.read(ctx, request, notifier).map(McpOutcome::result);
+				return streaming.read(ctx, request, notifier).map(McpRoundResult::result);
 			};
 		}
 		return (ctx, params) -> {
 			ReadResourceRequest request = this.jsonMapper.convertValue(params, ReadResourceRequest.class);
-			return handler.read(ctx, request).map(McpOutcome::result);
+			return handler.read(ctx, request).map(McpRoundResult::result);
 		};
 	}
 

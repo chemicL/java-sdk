@@ -12,7 +12,7 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.server.McpInvocation;
-import io.modelcontextprotocol.modern.server.McpOutcome;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpSchedulers;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.spec.McpSchema.Implementation;
@@ -148,11 +148,18 @@ class ToolsFeatureTests {
 	}
 
 	@Test
-	void outcomeInputRequiredIsPreserved() {
-		McpOutcome<io.modelcontextprotocol.modern.McpSchema.CallToolResult> outcome = McpOutcome.inputRequired(
-				io.modelcontextprotocol.modern.McpSchema.InputRequiredResult.builder().requestState("s").build());
-		assertThat(outcome.isComplete()).isFalse();
-		assertThat(outcome.completeResult()).isEmpty();
+	void withInputHandlerCanAnswerInputRequired() {
+		io.modelcontextprotocol.modern.McpSchema.InputRequiredResult inputRequired = io.modelcontextprotocol.modern.McpSchema.InputRequiredResult
+			.builder()
+			.requestState("s")
+			.build();
+		AsyncToolHandler handler = AsyncToolHandler
+			.withInput((ctx, req) -> Mono.just(McpRoundResult.inputRequired(inputRequired)));
+
+		StepVerifier.create(handler.call(null, null)).assertNext(round -> {
+			assertThat(round).isInstanceOf(McpRoundResult.InputRequired.class);
+			assertThat(round.result()).isSameAs(inputRequired);
+		}).verifyComplete();
 	}
 
 }

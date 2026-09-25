@@ -64,14 +64,14 @@ class McpServerMrtrTests {
 				return Mono.just(AsyncToolHandler.withInput((c, req) -> {
 					if (req.requestState() != null) {
 						seenRequestState.set(req.requestState());
-						return Mono.just(io.modelcontextprotocol.modern.server.McpOutcome
+						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult
 							.complete(CallToolResult.builder().addContent(new TextContent("resumed")).build()));
 					}
-					return Mono.just(
-							io.modelcontextprotocol.modern.server.McpOutcome.inputRequired(InputRequiredResult.builder()
-								.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
-								.requestState("secret-plaintext")
-								.build()));
+					return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult
+						.inputRequired(InputRequiredResult.builder()
+							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
+							.requestState("secret-plaintext")
+							.build()));
 				}));
 			}
 		};
@@ -120,10 +120,10 @@ class McpServerMrtrTests {
 
 			@Override
 			public Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name) {
-				return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono
-					.just(io.modelcontextprotocol.modern.server.McpOutcome.inputRequired(InputRequiredResult.builder()
-						.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
-						.build()))));
+				return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(
+						io.modelcontextprotocol.modern.server.McpRoundResult.inputRequired(InputRequiredResult.builder()
+							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
+							.build()))));
 			}
 		};
 		McpServer server = McpServer.builder()

@@ -9,8 +9,8 @@ import java.util.function.BiFunction;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.server.McpAsyncNotifier;
-import io.modelcontextprotocol.modern.server.McpOutcome;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -22,15 +22,15 @@ import reactor.core.publisher.Mono;
  */
 public interface AsyncPromptHandler {
 
-	Mono<McpOutcome<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request);
+	Mono<McpRoundResult<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request);
 
 	interface Streaming extends AsyncPromptHandler {
 
-		Mono<McpOutcome<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request,
+		Mono<McpRoundResult<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request,
 				McpAsyncNotifier notifier);
 
 		@Override
-		default Mono<McpOutcome<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request) {
+		default Mono<McpRoundResult<GetPromptResult>> get(McpRequestContext ctx, GetPromptRequest request) {
 			throw new UnsupportedOperationException("Streaming handlers must be invoked with a notifier");
 		}
 
@@ -38,21 +38,21 @@ public interface AsyncPromptHandler {
 
 	static AsyncPromptHandler of(BiFunction<McpRequestContext, GetPromptRequest, Mono<GetPromptResult>> fn) {
 		Assert.notNull(fn, "fn must not be null");
-		return (ctx, request) -> fn.apply(ctx, request).map(McpOutcome::complete);
+		return (ctx, request) -> fn.apply(ctx, request).map(McpRoundResult::complete);
 	}
 
 	static AsyncPromptHandler withInput(
-			BiFunction<McpRequestContext, GetPromptRequest, Mono<McpOutcome<GetPromptResult>>> fn) {
+			BiFunction<McpRequestContext, GetPromptRequest, Mono<McpRoundResult<GetPromptResult>>> fn) {
 		Assert.notNull(fn, "fn must not be null");
 		return fn::apply;
 	}
 
 	static Streaming streaming(AsyncStreamingFunction<GetPromptRequest, GetPromptResult> fn) {
 		Assert.notNull(fn, "fn must not be null");
-		return (ctx, request, notifier) -> fn.apply(ctx, request, notifier).map(McpOutcome::complete);
+		return (ctx, request, notifier) -> fn.apply(ctx, request, notifier).map(McpRoundResult::complete);
 	}
 
-	static Streaming streamingWithInput(AsyncStreamingFunction<GetPromptRequest, McpOutcome<GetPromptResult>> fn) {
+	static Streaming streamingWithInput(AsyncStreamingFunction<GetPromptRequest, McpRoundResult<GetPromptResult>> fn) {
 		Assert.notNull(fn, "fn must not be null");
 		return fn::apply;
 	}

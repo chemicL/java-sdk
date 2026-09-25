@@ -17,7 +17,7 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpOutcome;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRouter;
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.util.Assert;
@@ -106,12 +106,12 @@ public final class ToolsFeature implements McpFeature {
 		if (handler instanceof AsyncToolHandler.Streaming streaming) {
 			return (McpHandler.Streaming) (ctx, params, notifier) -> {
 				CallToolRequest request = this.jsonMapper.convertValue(params, CallToolRequest.class);
-				return streaming.call(ctx, request, notifier).map(McpOutcome::result);
+				return streaming.call(ctx, request, notifier).map(McpRoundResult::result);
 			};
 		}
 		return (ctx, params) -> {
 			CallToolRequest request = this.jsonMapper.convertValue(params, CallToolRequest.class);
-			return handler.call(ctx, request).map(McpOutcome::result);
+			return handler.call(ctx, request).map(McpRoundResult::result);
 		};
 	}
 
