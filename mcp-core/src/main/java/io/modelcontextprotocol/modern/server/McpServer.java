@@ -24,6 +24,7 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
+import io.modelcontextprotocol.modern.McpSchema.CacheableResult;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities.Elicitation;
 import io.modelcontextprotocol.modern.McpSchema.ElicitUrlRequest;
@@ -31,7 +32,6 @@ import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequest;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
-import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
 import io.modelcontextprotocol.modern.McpSchema.Result;
@@ -128,10 +128,10 @@ public final class McpServer implements McpRequestManager {
 
 	private Mono<McpInvocation> doResolve(McpTransportContext transportContext, JSONRPCRequest request, Object id,
 			boolean blocking) {
-		Map<String, Object> paramsMap = toParamsMap(request.params());
-		if (paramsMap == null) {
+		if (request.params() == null) {
 			return singleError(id, ErrorCodes.INVALID_PARAMS, "params is required");
 		}
+		Map<String, Object> paramsMap = toParamsMap(request.params());
 		Map<String, Object> meta = asMetaMap(paramsMap.get("_meta"));
 		if (meta == null) {
 			return singleError(id, ErrorCodes.INVALID_PARAMS, "params._meta is required");
@@ -140,35 +140,30 @@ public final class McpServer implements McpRequestManager {
 		if (!(versionRaw instanceof String protocolVersion) || protocolVersion.isBlank()) {
 			return singleError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.PROTOCOL_VERSION + "'] is required");
 		}
+		// Checked before the rest of _meta: a client on another revision may shape it
+		// differently, and must still learn which versions this server supports.
+		if (!this.supportedVersions.contains(protocolVersion)) {
+			return singleError(id, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
+					new UnsupportedProtocolVersionData(this.supportedVersions, protocolVersion));
+		}
 		Object capabilitiesRaw = meta.get(MetaKeys.CLIENT_CAPABILITIES);
 		if (capabilitiesRaw == null) {
 			return singleError(id, ErrorCodes.INVALID_PARAMS,
 					"_meta['" + MetaKeys.CLIENT_CAPABILITIES + "'] is required");
 		}
-		if (!this.supportedVersions.contains(protocolVersion)) {
-			return singleError(id, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
-					new UnsupportedProtocolVersionData(this.supportedVersions, protocolVersion));
-		}
 
-		ClientCapabilities clientCapabilities = this.jsonMapper.convertValue(capabilitiesRaw, ClientCapabilities.class);
+		ClientCapabilities clientCapabilities = convertParam(capabilitiesRaw, ClientCapabilities.class,
+				"_meta['" + MetaKeys.CLIENT_CAPABILITIES + "']");
 		Object clientInfoRaw = meta.get(MetaKeys.CLIENT_INFO);
 		Implementation clientInfo = clientInfoRaw == null ? null
-				: this.jsonMapper.convertValue(clientInfoRaw, Implementation.class);
+				: convertParam(clientInfoRaw, Implementation.class, "_meta['" + MetaKeys.CLIENT_INFO + "']");
 
-		Object logLevelRaw = meta.get(MetaKeys.LOG_LEVEL);
-		LoggingLevel logLevel = null;
-		if (logLevelRaw != null) {
-			logLevel = logLevelRaw instanceof String s ? LoggingLevel.fromValue(s) : null;
-			if (logLevel == null) {
-				return singleError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.LOG_LEVEL + "'] is invalid");
-			}
-		}
 		Object progressToken = meta.get(MetaKeys.PROGRESS_TOKEN);
 		String primitiveName = extractPrimitiveName(paramsMap);
 		boolean retry = paramsMap.get("inputResponses") != null || paramsMap.get("requestState") != null;
 
 		McpRequestContext ctx = new McpRequestContext(id, request.method(), protocolVersion, clientCapabilities,
-				clientInfo, logLevel, progressToken, primitiveName, meta, transportContext, retry, blocking);
+				clientInfo, progressToken, primitiveName, meta, transportContext, retry, blocking);
 
 		Map<String, Object> effectiveParams = paramsMap;
 		if (retry && MRTR_ELIGIBLE_METHODS.contains(request.method())) {
@@ -224,6 +219,11 @@ public final class McpServer implements McpRequestManager {
 	}
 
 	private JSONRPCResponse mapResultToResponse(McpRequestContext ctx, Result result) {
+		if (result.resultType() == null || result.resultType().isBlank()) {
+			throw McpError.builder(ErrorCodes.INTERNAL_ERROR)
+				.message("Result for '" + ctx.method() + "' has no resultType")
+				.build();
+		}
 		if (result instanceof InputRequiredResult inputRequired) {
 			if (!this.inputRequiredMethods.contains(ctx.method())) {
 				throw McpError.builder(ErrorCodes.INTERNAL_ERROR)
@@ -240,10 +240,11 @@ public final class McpServer implements McpRequestManager {
 		}
 		resultMeta.put(MetaKeys.SERVER_INFO, this.serverInfo);
 		resultMap.put("_meta", resultMeta);
-		// A retry's response carries fulfilled MRTR state, never a cacheable snapshot.
-		if (ctx.isRetry()) {
-			resultMap.remove("ttlMs");
-			resultMap.remove("cacheScope");
+		// A retry's result depends on inputs outside the cache key. The hints stay
+		// (they are required) but mark it uncacheable.
+		if (ctx.isRetry() && result instanceof CacheableResult) {
+			resultMap.put("ttlMs", 0L);
+			resultMap.put("cacheScope", this.jsonMapper.convertValue(CacheScope.PRIVATE, String.class));
 		}
 		return JSONRPCResponse.result(ctx.requestId(), resultMap);
 	}
@@ -261,7 +262,7 @@ public final class McpServer implements McpRequestManager {
 			for (InputRequest inputRequest : inputRequired.inputRequests().values()) {
 				switch (inputRequest.method()) {
 					case McpSchema.METHOD_ELICITATION_CREATE -> {
-						if (inputRequest.params() instanceof ElicitUrlRequest) {
+						if (isUrlElicitation(inputRequest.params())) {
 							needsElicitUrl = needsElicitUrl || !ctx.clientCapabilities().supportsElicitationUrl();
 						}
 						else {
@@ -272,8 +273,9 @@ public final class McpServer implements McpRequestManager {
 						needsSampling = needsSampling || !ctx.clientCapabilities().supportsSampling();
 					case McpSchema.METHOD_ROOTS_LIST ->
 						needsRoots = needsRoots || !ctx.clientCapabilities().supportsRoots();
-					default -> {
-					}
+					default -> throw McpError.builder(ErrorCodes.INTERNAL_ERROR)
+						.message("Unsupported input request method: " + inputRequest.method())
+						.build();
 				}
 			}
 			if (needsElicitForm || needsElicitUrl || needsSampling || needsRoots) {
@@ -302,13 +304,18 @@ public final class McpServer implements McpRequestManager {
 				inputRequired.meta());
 	}
 
+	private static boolean isUrlElicitation(Object params) {
+		return params instanceof ElicitUrlRequest
+				|| (params instanceof Map<?, ?> m && ElicitUrlRequest.MODE.equals(m.get("mode")));
+	}
+
 	private JSONRPCResponse errorResponse(Object id, Throwable throwable) {
 		if (throwable instanceof McpError mcpError) {
 			return JSONRPCResponse.error(id, mcpError.getJsonRpcError());
 		}
+		// Unexpected exceptions stay server-side: their messages may expose internals.
 		logger.warn("Unhandled exception while dispatching request {}", id, throwable);
-		String message = throwable.getMessage() != null ? throwable.getMessage() : "Internal error";
-		return JSONRPCResponse.error(id, new JSONRPCError(ErrorCodes.INTERNAL_ERROR, message));
+		return JSONRPCResponse.error(id, new JSONRPCError(ErrorCodes.INTERNAL_ERROR, "Internal error"));
 	}
 
 	private Mono<McpInvocation> singleError(Object id, int code, String message) {
@@ -329,13 +336,29 @@ public final class McpServer implements McpRequestManager {
 
 	@SuppressWarnings("unchecked")
 	private Map<String, Object> toParamsMap(Object params) {
-		if (params == null) {
-			return null;
-		}
 		if (params instanceof Map<?, ?> m) {
 			return (Map<String, Object>) m;
 		}
-		return this.jsonMapper.convertValue(params, MAP_TYPE_REF);
+		try {
+			return this.jsonMapper.convertValue(params, MAP_TYPE_REF);
+		}
+		catch (RuntimeException ex) {
+			throw invalidParam("params", ex);
+		}
+	}
+
+	private <T> T convertParam(Object raw, Class<T> type, String field) {
+		try {
+			return this.jsonMapper.convertValue(raw, type);
+		}
+		catch (RuntimeException ex) {
+			throw invalidParam(field, ex);
+		}
+	}
+
+	private static McpError invalidParam(String field, RuntimeException cause) {
+		logger.debug("Malformed {}", field, cause);
+		return McpError.builder(ErrorCodes.INVALID_PARAMS).message(field + " is malformed").build();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -441,6 +464,7 @@ public final class McpServer implements McpRequestManager {
 		 * Caching hints for the {@code server/discover} result. Defaults to no caching.
 		 */
 		public Builder discoverCache(long ttlMs, CacheScope cacheScope) {
+			Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 			Assert.notNull(cacheScope, "cacheScope must not be null");
 			this.discoverTtlMs = ttlMs;
 			this.discoverCacheScope = cacheScope;

@@ -44,6 +44,8 @@ public final class ResourcesFeature implements McpFeature {
 
 	private ResourcesFeature(McpAsyncResourceRepository repository, McpJsonMapper jsonMapper, long defaultTtlMs,
 			CacheScope defaultCacheScope) {
+		Assert.isTrue(defaultTtlMs >= 0, "defaultTtlMs must not be negative");
+		Assert.notNull(defaultCacheScope, "defaultCacheScope must not be null");
 		this.repository = repository;
 		this.jsonMapper = jsonMapper;
 		this.defaultTtlMs = defaultTtlMs;
@@ -100,7 +102,7 @@ public final class ResourcesFeature implements McpFeature {
 	private McpHandler listHandler() {
 		return (ctx, params) -> {
 			PaginatedRequest request = params == null ? new PaginatedRequest(null, null)
-					: this.jsonMapper.convertValue(params, PaginatedRequest.class);
+					: FeatureHandlers.convertParams(this.jsonMapper, params, PaginatedRequest.class);
 			return this.repository.list(ctx, request.cursor()).map(this::toListResult);
 		};
 	}
@@ -108,7 +110,7 @@ public final class ResourcesFeature implements McpFeature {
 	private McpHandler listTemplatesHandler() {
 		return (ctx, params) -> {
 			PaginatedRequest request = params == null ? new PaginatedRequest(null, null)
-					: this.jsonMapper.convertValue(params, PaginatedRequest.class);
+					: FeatureHandlers.convertParams(this.jsonMapper, params, PaginatedRequest.class);
 			return this.repository.listTemplates(ctx, request.cursor()).map(this::toListTemplatesResult);
 		};
 	}

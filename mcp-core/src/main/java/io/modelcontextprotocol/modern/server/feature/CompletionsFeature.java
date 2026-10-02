@@ -68,7 +68,7 @@ public final class CompletionsFeature implements McpFeature {
 				return Mono
 					.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.ref is required").build());
 			}
-			CompleteRequest request = this.jsonMapper.convertValue(params, CompleteRequest.class);
+			CompleteRequest request = FeatureHandlers.convertParams(this.jsonMapper, params, CompleteRequest.class);
 			return this.repository.complete(c, request).map(result -> result);
 		};
 		return Mono.just(handler);

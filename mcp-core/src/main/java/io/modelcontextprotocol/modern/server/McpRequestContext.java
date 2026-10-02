@@ -11,7 +11,6 @@ import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
-import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
 import io.modelcontextprotocol.util.Assert;
 
@@ -33,8 +32,6 @@ public final class McpRequestContext {
 
 	private final Implementation clientInfo;
 
-	private final LoggingLevel logLevel;
-
 	private final Object progressToken;
 
 	private final String primitiveName;
@@ -48,8 +45,8 @@ public final class McpRequestContext {
 	private final boolean blocking;
 
 	McpRequestContext(Object requestId, String method, String protocolVersion, ClientCapabilities clientCapabilities,
-			Implementation clientInfo, LoggingLevel logLevel, Object progressToken, String primitiveName,
-			Map<String, Object> meta, McpTransportContext transportContext, boolean retry, boolean blocking) {
+			Implementation clientInfo, Object progressToken, String primitiveName, Map<String, Object> meta,
+			McpTransportContext transportContext, boolean retry, boolean blocking) {
 		Assert.notNull(requestId, "requestId must not be null");
 		Assert.hasText(method, "method must not be empty");
 		Assert.hasText(protocolVersion, "protocolVersion must not be empty");
@@ -59,7 +56,6 @@ public final class McpRequestContext {
 		this.protocolVersion = protocolVersion;
 		this.clientCapabilities = clientCapabilities;
 		this.clientInfo = clientInfo;
-		this.logLevel = logLevel;
 		this.progressToken = progressToken;
 		this.primitiveName = primitiveName;
 		this.meta = meta == null ? Map.of() : meta;
@@ -91,11 +87,6 @@ public final class McpRequestContext {
 	/** The client info declared in {@code _meta}, if any. Display/logging only. */
 	public Implementation clientInfo() {
 		return this.clientInfo;
-	}
-
-	/** The per-request log level, or {@code null} if the request declared none. */
-	public LoggingLevel logLevel() {
-		return this.logLevel;
 	}
 
 	/** The progress token, or {@code null} if the request declared none. */

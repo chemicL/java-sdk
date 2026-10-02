@@ -7,6 +7,8 @@ package io.modelcontextprotocol.modern.server;
 import java.util.Map;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpError;
+import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 
 /**
  * Reads a typed value out of the raw {@code inputResponses} map a retried
@@ -23,13 +25,24 @@ public final class InputResponses {
 	/**
 	 * @return the response for {@code key} converted to {@code type}, or {@code null} if
 	 * {@code inputResponses} is {@code null} or has no entry for {@code key}
+	 * @throws McpError {@code -32602} if the response cannot be converted to {@code type}
 	 */
 	public static <T> T get(Map<String, Object> inputResponses, String key, Class<T> type, McpJsonMapper jsonMapper) {
 		if (inputResponses == null) {
 			return null;
 		}
 		Object raw = inputResponses.get(key);
-		return raw == null ? null : jsonMapper.convertValue(raw, type);
+		if (raw == null) {
+			return null;
+		}
+		try {
+			return jsonMapper.convertValue(raw, type);
+		}
+		catch (RuntimeException ex) {
+			throw McpError.builder(ErrorCodes.INVALID_PARAMS)
+				.message("inputResponses['" + key + "'] is malformed")
+				.build();
+		}
 	}
 
 }

@@ -29,7 +29,7 @@ class HmacRequestStateCodecTests {
 		Map<String, Object> meta = Map.of(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION,
 				MetaKeys.CLIENT_CAPABILITIES, Map.of());
 		return new McpRequestContext(1, method, McpSchema.LATEST_PROTOCOL_VERSION, ClientCapabilities.NONE, null, null,
-				null, primitiveName, meta, tc, false, false);
+				primitiveName, meta, tc, false, false);
 	}
 
 	private static HmacRequestStateCodec codec(Clock clock) {

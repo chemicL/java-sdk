@@ -40,6 +40,7 @@ import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTool
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.respond;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 class ToolsFeatureTests {
 
@@ -66,6 +67,36 @@ class ToolsFeatureTests {
 		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
+	}
+
+	@Test
+	void malformedArgumentsAreInvalidParams() {
+		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
+			@Override
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ToolsPage.of(List.of(ECHO_TOOL)));
+			}
+
+			@Override
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
+				return Mono.just(AsyncFeatureHandler.of((c, req) -> Mono.just(CallToolResult.builder().build())));
+			}
+		};
+		McpServer server = baseBuilder().feature(tools(repo)).build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
+				Map.of("_meta", meta(), "name", "echo", "arguments", "not-an-object"));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void negativeTtlIsRejected() {
+		assertThatIllegalArgumentException()
+			.isThrownBy(() -> ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), -1L, CacheScope.PRIVATE));
+		assertThatIllegalArgumentException().isThrownBy(() -> new ToolsPage(List.of(), null, -1L, null));
 	}
 
 	private static final ThreadLocal<String> PRINCIPAL = new ThreadLocal<>();

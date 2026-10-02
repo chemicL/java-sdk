@@ -92,6 +92,78 @@ class McpServerTests {
 	}
 
 	@Test
+	void unsupportedVersionWinsOverMissingClientCapabilities() {
+		McpServer server = baseBuilder().build();
+		Map<String, Object> meta = new HashMap<>();
+		meta.put(MetaKeys.PROTOCOL_VERSION, "2099-01-01");
+		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(
+					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
+			.verifyComplete();
+	}
+
+	@Test
+	void malformedClientCapabilitiesIsInvalidParams() {
+		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
+				Map.of("_meta", meta(MetaKeys.CLIENT_CAPABILITIES, "bogus")));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void nonObjectParamsIsInvalidParams() {
+		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, List.of(1));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void logLevelIsIgnored() {
+		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
+				Map.of("_meta", meta(MetaKeys.LOG_LEVEL, "not-a-level")));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(response -> assertThat(response.error()).isNull())
+			.verifyComplete();
+	}
+
+	@Test
+	void resultWithoutResultTypeIsInternalError() {
+		Result untyped = new Result() {
+			@Override
+			public String resultType() {
+				return null;
+			}
+
+			@Override
+			public Map<String, Object> meta() {
+				return null;
+			}
+		};
+		McpServer server = baseBuilder().feature(feature("tools/call", (ctx, params) -> Mono.just(untyped))).build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
+
+		StepVerifier.create(respond(server, request))
+			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
+			.verifyComplete();
+	}
+
+	@Test
+	void negativeDiscoverTtlIsRejected() {
+		assertThatThrownBy(() -> baseBuilder().discoverCache(-1, McpSchema.CacheScope.PRIVATE))
+			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
 	void unknownMethodIsRejected() {
 		McpServer server = baseBuilder().build();
 		JSONRPCRequest request = new JSONRPCRequest("does/not/exist", 1, Map.of("_meta", meta()));
@@ -107,9 +179,10 @@ class McpServerTests {
 		McpServer server = baseBuilder().feature(failing).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
-			.verifyComplete();
+		StepVerifier.create(respond(server, request)).assertNext(response -> {
+			assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+			assertThat(response.error().message()).doesNotContain("boom");
+		}).verifyComplete();
 	}
 
 	@Test

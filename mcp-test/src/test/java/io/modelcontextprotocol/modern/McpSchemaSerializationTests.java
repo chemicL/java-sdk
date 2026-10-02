@@ -249,6 +249,35 @@ class McpSchemaSerializationTests {
 			.isThrownBy(() -> JsonRpc.deserializeMessage(this.jsonMapper, "{\"jsonrpc\":\"2.0\",\"id\":1}"));
 	}
 
+	@ParameterizedTest
+	@MethodSource("invalidEnvelopes")
+	void invalidJsonRpcEnvelopeIsRejectedAsIllegalArgument(String json) {
+		assertThatIllegalArgumentException().isThrownBy(() -> JsonRpc.deserializeMessage(this.jsonMapper, json));
+	}
+
+	static Stream<String> invalidEnvelopes() {
+		return Stream.of("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}",
+				"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\"}",
+				"{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"tools/list\"}", "{\"id\":1,\"method\":\"tools/list\"}",
+				"{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"tools/list\"}",
+				"{\"jsonrpc\":\"1.0\",\"method\":\"notifications/cancelled\"}");
+	}
+
+	@Test
+	void extensionIdMustBePrefixedMetaKey() {
+		ServerCapabilities caps = ServerCapabilities.builder()
+			.extension("io.modelcontextprotocol/ui", Map.of())
+			.extension("com.example/my-ext_v1.2", null)
+			.build();
+		assertThat(caps.extensions()).containsOnlyKeys("io.modelcontextprotocol/ui", "com.example/my-ext_v1.2");
+
+		for (String invalid : List.of("no-prefix", "/name", "1com.example/name", "com.example-/name",
+				"com.example/-name", "com..example/name")) {
+			assertThatIllegalArgumentException().as(invalid)
+				.isThrownBy(() -> ServerCapabilities.builder().extension(invalid, Map.of()));
+		}
+	}
+
 	// Case B (CONTRIBUTING.md): every spec-required field rejects null on construction,
 	// falls back to its documented default when missing on the wire, and unknown fields
 	// are tolerated.

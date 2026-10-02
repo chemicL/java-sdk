@@ -6,8 +6,6 @@ package io.modelcontextprotocol.modern.server;
 
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.McpSchema;
-import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
-import io.modelcontextprotocol.modern.McpSchema.LoggingMessageParams;
 import io.modelcontextprotocol.modern.McpSchema.ProgressParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,17 +47,6 @@ final class DefaultAsyncNotifier implements McpAsyncNotifier {
 			}
 			this.lastProgress = progress;
 			emit(McpSchema.METHOD_NOTIFICATION_PROGRESS, new ProgressParams(token, progress, total, message, null));
-		});
-	}
-
-	@Override
-	public Mono<Void> log(LoggingLevel level, String logger, Object data) {
-		return Mono.fromRunnable(() -> {
-			LoggingLevel threshold = this.ctx.logLevel();
-			if (threshold == null || level.level() < threshold.level()) {
-				return;
-			}
-			emit(McpSchema.METHOD_NOTIFICATION_MESSAGE, new LoggingMessageParams(level, logger, data));
 		});
 	}
 

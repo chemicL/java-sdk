@@ -16,6 +16,7 @@ import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ElicitFormRequest;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.InputRequest;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
@@ -140,6 +141,55 @@ class McpServerMrtrTests {
 		assertThat(seenRequestState.get()).isNull();
 	}
 
+	private static McpServer serverAnswering(InputRequiredResult inputRequired) {
+		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
+			@Override
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ToolsPage.of(List.of()));
+			}
+
+			@Override
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
+				return Mono.just(AsyncFeatureHandler.withInput((c, req) -> Mono.just(inputRequired(inputRequired))));
+			}
+		};
+		return McpServer.builder()
+			.serverInfo(SERVER_INFO)
+			.jsonMapper(new GsonMcpJsonMapper())
+			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.build();
+	}
+
+	private static JSONRPCRequest toolCall(Map<String, Object> meta) {
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta);
+		params.put("name", "echo");
+		return new JSONRPCRequest("tools/call", 1, params);
+	}
+
+	@Test
+	void inputRequestWithUnknownMethodIsInternalError() {
+		McpServer server = serverAnswering(
+				new InputRequiredResult(Map.of("q1", new InputRequest("tasks/get", Map.of())), null, null, null));
+
+		var response = respond(server, toolCall(metaWithElicitation())).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+	}
+
+	@Test
+	void rawMapUrlElicitationRequiresUrlCapability() {
+		InputRequest urlElicitation = new InputRequest(McpSchema.METHOD_ELICITATION_CREATE,
+				Map.of("mode", "url", "message", "Sign in", "url", "https://example.com/login"));
+		McpServer server = serverAnswering(new InputRequiredResult(Map.of("q1", urlElicitation), null, null, null));
+
+		// The client declares form-mode elicitation only.
+		var response = respond(server, toolCall(metaWithElicitation())).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY);
+	}
+
 	@Test
 	void elicitationWithoutDeclaredCapabilityIsRejected() {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
@@ -184,7 +234,7 @@ class McpServerMrtrTests {
 	}
 
 	@Test
-	void retryResultCarriesNoCacheHints() {
+	void retryResultIsMarkedUncacheable() {
 		McpAsyncResourceRepository repo = new McpAsyncResourceRepository() {
 			@Override
 			public Mono<ResourcesPage> list(McpRequestContext ctx, String cursor) {
@@ -197,6 +247,8 @@ class McpServerMrtrTests {
 				return Mono.just(AsyncFeatureHandler.of((c,
 						req) -> Mono.just(ReadResourceResult
 							.builder(List.of(new TextResourceContents(req.uri(), "text/plain", "content", null)))
+							.ttlMs(60_000L)
+							.cacheScope(CacheScope.PUBLIC)
 							.build())));
 			}
 		};
@@ -216,7 +268,9 @@ class McpServerMrtrTests {
 
 		@SuppressWarnings("unchecked")
 		Map<String, Object> result = (Map<String, Object>) response.result();
-		assertThat(result).doesNotContainKeys("ttlMs", "cacheScope");
+		assertThat(((Number) result.get("ttlMs")).longValue()).isZero();
+		// Gson ignores @JsonProperty on enums, so compare case-insensitively.
+		assertThat((String) result.get("cacheScope")).isEqualToIgnoringCase("private");
 	}
 
 }

@@ -87,7 +87,7 @@ public final class JsonRpc {
 		@JsonProperty("params") Object params) implements JSONRPCMessage { // @formatter:on
 
 		public JSONRPCRequest {
-			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.isTrue(JSONRPC_VERSION.equals(jsonrpc), "jsonrpc must be \"" + JSONRPC_VERSION + "\"");
 			Assert.notNull(id, "MCP requests MUST include an ID - null IDs are not allowed");
 			Assert.isTrue(id instanceof String || id instanceof Integer || id instanceof Long,
 					"MCP requests MUST have an ID that is either a string or integer");
@@ -112,7 +112,7 @@ public final class JsonRpc {
 		@JsonProperty("params") Object params) implements JSONRPCMessage { // @formatter:on
 
 		public JSONRPCNotification {
-			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.isTrue(JSONRPC_VERSION.equals(jsonrpc), "jsonrpc must be \"" + JSONRPC_VERSION + "\"");
 			Assert.notNull(method, "MCP notification method must not be null");
 		}
 
@@ -138,7 +138,7 @@ public final class JsonRpc {
 		@JsonProperty("error") JSONRPCError error) implements JSONRPCMessage { // @formatter:on
 
 		public JSONRPCResponse {
-			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.isTrue(JSONRPC_VERSION.equals(jsonrpc), "jsonrpc must be \"" + JSONRPC_VERSION + "\"");
 			Assert.isTrue((result != null) ^ (error != null), "MCP responses MUST either have a result or error");
 			Assert.isTrue(id != null || error != null, "MCP result responses MUST include an ID");
 			Assert.isTrue(id == null || id instanceof String || id instanceof Integer || id instanceof Long,

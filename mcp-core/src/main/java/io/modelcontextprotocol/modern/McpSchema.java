@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -366,9 +367,13 @@ public final class McpSchema {
 		 */
 		public static final class Builder {
 
-			private Map<String, Object> experimental;
+			// Prefix: dot-separated labels then '/'; name: alphanumeric at both ends,
+			// '-', '_', '.' allowed inside, or empty.
+			private static final Pattern EXTENSION_ID = Pattern
+				.compile("[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*/"
+						+ "(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)?");
 
-			private Logging logging;
+			private Map<String, Object> experimental;
 
 			private Completions completions;
 
@@ -382,11 +387,6 @@ public final class McpSchema {
 
 			public Builder experimental(Map<String, Object> experimental) {
 				this.experimental = experimental;
-				return this;
-			}
-
-			public Builder logging() {
-				this.logging = new Logging();
 				return this;
 			}
 
@@ -410,7 +410,13 @@ public final class McpSchema {
 				return this;
 			}
 
+			/**
+			 * Advertises an extension. {@code id} must be a {@code _meta}-style key with
+			 * a prefix, e.g. {@code com.example/my-extension}.
+			 */
 			public Builder extension(String id, Map<String, Object> settings) {
+				Assert.isTrue(id != null && EXTENSION_ID.matcher(id).matches(),
+						"extension id must be a prefixed _meta key, e.g. com.example/name: " + id);
 				this.extensions.put(id, settings == null ? Map.of() : settings);
 				return this;
 			}
@@ -450,7 +456,8 @@ public final class McpSchema {
 			}
 
 			public ServerCapabilities build() {
-				return new ServerCapabilities(experimental, logging, completions, prompts, resources, tools,
+				// Logging is deprecated and not offered by modern servers.
+				return new ServerCapabilities(experimental, null, completions, prompts, resources, tools,
 						extensions.isEmpty() ? null : Map.copyOf(extensions));
 			}
 
@@ -532,6 +539,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}
@@ -803,6 +811,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}
@@ -880,6 +889,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}
@@ -957,6 +967,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}
@@ -1034,6 +1045,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}
@@ -1101,6 +1113,7 @@ public final class McpSchema {
 			}
 
 			public Builder ttlMs(long ttlMs) {
+				Assert.isTrue(ttlMs >= 0, "ttlMs must not be negative");
 				this.ttlMs = ttlMs;
 				return this;
 			}

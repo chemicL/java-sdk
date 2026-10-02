@@ -31,6 +31,7 @@ import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
+import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.HeaderAccessor;
 import io.modelcontextprotocol.server.transport.ServerHttpHeaderValidator;
 import io.modelcontextprotocol.server.transport.ServerTransportSecurityException;
@@ -453,7 +454,10 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		private int requestMaxSize = DEFAULT_REQUEST_MAX_SIZE;
 
-		private ServerHttpHeaderValidator httpHeaderValidator = ServerHttpHeaderValidator.NOOP;
+		// No allowed origins: requests without an Origin (non-browser clients) pass, any
+		// cross-origin browser request is rejected until explicitly allowed.
+		private ServerHttpHeaderValidator httpHeaderValidator = DefaultServerTransportSecurityValidator.builder()
+			.build();
 
 		private Builder(McpRequestManager requestManager) {
 			Assert.notNull(requestManager, "requestManager must not be null");
@@ -492,7 +496,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 		/**
 		 * Validates the headers of every POST before it is read, e.g. Host/Origin checks
 		 * against DNS rebinding. A rejection is answered with the exception's status
-		 * code. Defaults to accepting every request.
+		 * code. Defaults to rejecting every request that carries an {@code Origin}
+		 * header.
 		 */
 		public Builder httpHeaderValidator(ServerHttpHeaderValidator httpHeaderValidator) {
 			Assert.notNull(httpHeaderValidator, "httpHeaderValidator must not be null");

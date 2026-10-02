@@ -24,7 +24,6 @@ import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.McpSchema.ImageContent;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
-import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.modern.McpSchema.Prompt;
 import io.modelcontextprotocol.modern.McpSchema.PromptArgument;
 import io.modelcontextprotocol.modern.McpSchema.PromptMessage;
@@ -273,13 +272,6 @@ public class ModernConformanceServlet {
 												.build())
 											.build())
 								.build()));
-			add("test_tool_with_logging", "Tool that sends log messages during execution",
-					SyncFeatureHandler.streaming((ctx, req, notifier) -> {
-						notifier.log(LoggingLevel.INFO, "conformance", "Tool execution started");
-						notifier.log(LoggingLevel.INFO, "conformance", "Tool processing data");
-						notifier.log(LoggingLevel.INFO, "conformance", "Tool execution completed");
-						return text("Tool execution completed with logging");
-					}));
 			add("test_error_handling", "Tool that returns an error for testing error handling",
 					SyncFeatureHandler.of((ctx, req) -> CallToolResult.builder()
 						.addContent(TextContent.builder("This tool intentionally returns an error for testing").build())
@@ -311,11 +303,10 @@ public class ModernConformanceServlet {
 						notifier.progress(50, 100.0, null);
 						return text("Streaming complete");
 					}));
+			// Logging is deprecated and unsupported, so no log is ever sent; the suite
+			// checks exactly that.
 			add("test_logging_tool", "Diagnostic logging validator tool",
-					SyncFeatureHandler.streaming((ctx, req, notifier) -> {
-						notifier.log(LoggingLevel.INFO, "conformance", "Diagnostic trace logging activated");
-						return text("Logging evaluated");
-					}));
+					SyncFeatureHandler.streaming((ctx, req, notifier) -> text("Logging evaluated")));
 			add("test_trigger_tool_change", "Emits a tools list-changed notification",
 					SyncFeatureHandler.of((ctx, req) -> {
 						changes.emit(new ServerChange.ToolsListChanged());

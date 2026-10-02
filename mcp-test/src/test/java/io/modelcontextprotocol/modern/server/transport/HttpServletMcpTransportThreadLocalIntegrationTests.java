@@ -187,6 +187,16 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 		return builder.build();
 	}
 
+	@Test
+	void crossOriginRequestIsRejectedByDefault() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder(post("alice", "tools/list", null), (name, value) -> true)
+			.header("Origin", "http://evil.example.com")
+			.build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(403);
+	}
+
 	private static Map<String, Object> parse(String json) throws IOException {
 		return JSON_MAPPER.readValue(json, new TypeRef<Map<String, Object>>() {
 		});

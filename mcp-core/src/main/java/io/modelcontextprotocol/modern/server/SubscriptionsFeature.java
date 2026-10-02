@@ -9,7 +9,9 @@ import java.util.Map;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ListChangedParams;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ResourceUpdatedParams;
@@ -84,8 +86,15 @@ final class SubscriptionsFeature implements McpFeature {
 	}
 
 	private Mono<Result> listen(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
-		SubscriptionsListenRequest request = params == null ? null
-				: this.jsonMapper.convertValue(params, SubscriptionsListenRequest.class);
+		SubscriptionsListenRequest request;
+		try {
+			request = params == null ? null : this.jsonMapper.convertValue(params, SubscriptionsListenRequest.class);
+		}
+		catch (RuntimeException ex) {
+			return Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS)
+				.message("Malformed SubscriptionsListenRequest")
+				.build());
+		}
 		SubscriptionFilter requested = request == null || request.notifications() == null ? SubscriptionFilter.EMPTY
 				: request.notifications();
 		SubscriptionFilter honoured = intersect(requested);

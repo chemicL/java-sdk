@@ -6,7 +6,6 @@ package io.modelcontextprotocol.modern.server.feature;
 
 import java.util.concurrent.Callable;
 
-import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.server.McpAsyncNotifier;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
@@ -59,11 +58,6 @@ final class SyncAdapters {
 		@Override
 		public void progress(double progress, Double total, String message) {
 			this.delegate.progress(progress, total, message).block();
-		}
-
-		@Override
-		public void log(LoggingLevel level, String logger, Object data) {
-			this.delegate.log(level, logger, data).block();
 		}
 
 		@Override
