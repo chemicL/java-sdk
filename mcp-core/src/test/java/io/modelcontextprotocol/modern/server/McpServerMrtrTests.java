@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.McpRoundResult.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpServerMrtrTests {
@@ -67,8 +69,7 @@ class McpServerMrtrTests {
 						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult
 							.complete(CallToolResult.builder().addContent(new TextContent("resumed")).build()));
 					}
-					return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult
-						.inputRequired(InputRequiredResult.builder()
+					return Mono.just(inputRequired(InputRequiredResult.builder()
 							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
 							.requestState("secret-plaintext")
 							.build()));
@@ -86,7 +87,7 @@ class McpServerMrtrTests {
 		params.put("name", "echo");
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
 
-		var response = server.resolve(McpTransportContext.EMPTY, request)
+		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
 			.block();
 
@@ -102,7 +103,7 @@ class McpServerMrtrTests {
 		retryParams.put("requestState", wireRequestState);
 		JSONRPCRequest retryRequest = new JSONRPCRequest("tools/call", 2, retryParams);
 
-		var retryResponse = server.resolve(McpTransportContext.EMPTY, retryRequest)
+		var retryResponse = server.resolveNonBlocking(McpTransportContext.EMPTY, retryRequest)
 			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
 			.block();
 
@@ -120,10 +121,18 @@ class McpServerMrtrTests {
 
 			@Override
 			public Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name) {
-				return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(
-						io.modelcontextprotocol.modern.server.McpRoundResult.inputRequired(InputRequiredResult.builder()
-							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
-							.build()))));
+				 return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(
+						 inputRequired(InputRequiredResult.builder()
+								 .elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type",
+										 "object")).build())
+								 .build()))));
+				// FIXME: This paradigm can fail because you could do this:
+//				return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(new McpRoundResult<CallToolResult>() {
+//					@Override
+//					public McpSchema.Result result() {
+//						return new McpSchema.GetPromptResult(null, null, null, null);
+//					}
+//				})));
 			}
 		};
 		McpServer server = McpServer.builder()
@@ -138,7 +147,7 @@ class McpServerMrtrTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> assertThat(response.error().code())
 				.isEqualTo(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY))
@@ -175,7 +184,7 @@ class McpServerMrtrTests {
 		params.put("inputResponses", Map.of("q1", Map.of("action", "accept")));
 		JSONRPCRequest request = new JSONRPCRequest("resources/read", 1, params);
 
-		var response = server.resolve(McpTransportContext.EMPTY, request)
+		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
 			.block();
 

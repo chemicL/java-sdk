@@ -80,7 +80,13 @@ class StdioMcpTransportTests {
 			java.util.function.BiFunction<McpTransportContext, JSONRPCRequest, Mono<McpInvocation>> resolveFn) {
 		return new McpRequestHandler() {
 			@Override
-			public Mono<McpInvocation> resolve(McpTransportContext transportContext, JSONRPCRequest request) {
+			public Mono<McpInvocation> resolveBlocking(McpTransportContext transportContext, JSONRPCRequest request) {
+				throw new AssertionError("stdio must never resolve for a blocking caller");
+			}
+
+			@Override
+			public Mono<McpInvocation> resolveNonBlocking(McpTransportContext transportContext,
+					JSONRPCRequest request) {
 				return resolveFn.apply(transportContext, request);
 			}
 

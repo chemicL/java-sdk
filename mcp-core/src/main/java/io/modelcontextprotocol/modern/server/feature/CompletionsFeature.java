@@ -37,7 +37,7 @@ public final class CompletionsFeature implements McpFeature {
 
 	public static CompletionsFeature ofSync(McpSyncCompletionRepository repository, McpJsonMapper jsonMapper) {
 		Assert.notNull(repository, "repository must not be null");
-		return of((ctx, request) -> SyncAdapters.unary(() -> repository.complete(ctx, request)), jsonMapper);
+		return of((ctx, request) -> SyncAdapters.unary(ctx, () -> repository.complete(ctx, request)), jsonMapper);
 	}
 
 	@Override

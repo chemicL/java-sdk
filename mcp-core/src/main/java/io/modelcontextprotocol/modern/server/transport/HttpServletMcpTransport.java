@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -17,7 +18,6 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestHandler;
-import io.modelcontextprotocol.modern.server.McpSchedulers;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
@@ -37,19 +37,24 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * A {@link jakarta.servlet.http.HttpServlet}-based transport for a modern
  * {@link McpRequestHandler}. There is no session, no {@code GET} stream and no
  * {@code Mcp-Session-Id}: every POST is a self-contained request or notification.
  * <p>
- * A {@code Unary} invocation is answered as {@code application/json}, blocking the
- * container thread (thread-locals set by servlet filters remain visible to sync
- * handlers). A {@code Streaming} invocation is answered as {@code text/event-stream} over
- * {@link AsyncContext}, without blocking the container thread; sync handlers on that path
- * run on {@code boundedElastic} instead.
+ * Every request except {@code subscriptions/listen} is served start to finish by the
+ * container thread that ran the filter chain: it is resolved with
+ * {@link McpRequestHandler#resolveBlocking} and the transport blocks on the result. Sync
+ * repositories and handlers therefore run on that thread and see every thread-local a
+ * servlet filter populated (Spring Security's {@code SecurityContextHolder}, MDC, ...). A
+ * {@code Unary} invocation is answered as {@code application/json}; a {@code Streaming}
+ * one as {@code text/event-stream}, with each notification written and flushed before the
+ * handler's notifier call returns.
+ * <p>
+ * {@code subscriptions/listen} is the exception: it runs no sync user code and can stay
+ * open for hours, so it is resolved with {@link McpRequestHandler#resolveNonBlocking} and
+ * served over {@link AsyncContext}, releasing the container thread.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -168,9 +173,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 
 		if (message instanceof JSONRPCNotification notification) {
-			this.requestHandler.handleNotification(transportContext, notification)
-				.contextWrite(ctx -> ctx.put(McpTransportContext.KEY, transportContext))
-				.block();
+			this.requestHandler.handleNotification(transportContext, notification).block();
 			response.setStatus(HttpServletResponse.SC_ACCEPTED);
 			return;
 		}
@@ -188,55 +191,56 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return;
 		}
 
-		McpInvocation invocation = this.requestHandler.resolve(transportContext, jsonRpcRequest)
-			.contextWrite(ctx -> ctx.put(McpTransportContext.KEY, transportContext)
-				.put(McpSchedulers.HANDLER_SCHEDULER_KEY, Schedulers.immediate()))
+		boolean listen = io.modelcontextprotocol.modern.McpSchema.METHOD_SUBSCRIPTIONS_LISTEN
+			.equals(jsonRpcRequest.method());
+		McpInvocation invocation = (listen ? this.requestHandler.resolveNonBlocking(transportContext, jsonRpcRequest)
+				: this.requestHandler.resolveBlocking(transportContext, jsonRpcRequest))
 			.block();
 
 		if (invocation instanceof McpInvocation.Streaming streaming) {
-			handleStreaming(request, response, transportContext, streaming);
+			if (listen) {
+				streamOverAsyncContext(request, response, streaming);
+			}
+			else {
+				streamOnContainerThread(response, streaming);
+			}
 			return;
 		}
 
-		JSONRPCResponse jsonRpcResponse = ((McpInvocation.Unary) invocation).response()
-			.contextWrite(ctx -> ctx.put(McpTransportContext.KEY, transportContext)
-				.put(McpSchedulers.HANDLER_SCHEDULER_KEY, Schedulers.immediate()))
-			.block();
+		JSONRPCResponse jsonRpcResponse = ((McpInvocation.Unary) invocation).response().block();
 		writeUnaryResponse(response, jsonRpcResponse);
 	}
 
-	private void handleStreaming(HttpServletRequest request, HttpServletResponse response,
-			McpTransportContext transportContext, McpInvocation.Streaming streaming) throws IOException {
-		response.setContentType(TEXT_EVENT_STREAM);
-		response.setCharacterEncoding(UTF_8);
-		response.setHeader("Cache-Control", "no-cache");
-		response.setHeader("X-Accel-Buffering", "no");
-		response.setStatus(HttpServletResponse.SC_OK);
-		response.flushBuffer();
+	/**
+	 * Subscribes on, and blocks, the container thread: a sync handler runs inside this
+	 * subscription, and each notification it emits is written by the same thread before
+	 * its notifier call returns. A client disconnect surfaces as a failed write, which
+	 * cancels the stream; blocking handler code cannot be interrupted, so it runs to
+	 * completion and its remaining output is discarded.
+	 */
+	private void streamOnContainerThread(HttpServletResponse response, McpInvocation.Streaming streaming)
+			throws IOException {
+		PrintWriter writer = startEventStream(response);
+		try {
+			streaming.messages().doOnNext(message -> writeEvent(writer, message)).blockLast();
+		}
+		catch (RuntimeException ex) {
+			logger.debug("Streaming response ended early: {}", ex.getMessage());
+		}
+	}
 
+	private void streamOverAsyncContext(HttpServletRequest request, HttpServletResponse response,
+			McpInvocation.Streaming streaming) throws IOException {
+		PrintWriter writer = startEventStream(response);
 		AsyncContext asyncContext = request.startAsync();
 		asyncContext.setTimeout(0);
-		PrintWriter writer = response.getWriter();
 
-		Flux<JSONRPCMessage> messages = streaming.messages()
-			.contextWrite(ctx -> ctx.put(McpTransportContext.KEY, transportContext)
-				.put(McpSchedulers.HANDLER_SCHEDULER_KEY, Schedulers.boundedElastic())
-				.put(McpSchedulers.STREAMING_SCHEDULER_KEY, Schedulers.boundedElastic()));
-
-		Disposable[] subscription = new Disposable[1];
-		subscription[0] = messages.subscribe(msg -> {
-			try {
-				writer.write("event: message\ndata: " + this.jsonMapper.writeValueAsString(msg) + "\n\n");
-				writer.flush();
-			}
-			catch (IOException e) {
-				logger.debug("Failed to write SSE message, disposing subscription: {}", e.getMessage());
-				subscription[0].dispose();
-			}
-		}, error -> {
-			logger.warn("Streaming invocation failed", error);
-			asyncContext.complete();
-		}, asyncContext::complete);
+		Disposable subscription = streaming.messages()
+			.doOnNext(message -> writeEvent(writer, message))
+			.subscribe(null, error -> {
+				logger.debug("Listen stream ended early: {}", error.getMessage());
+				asyncContext.complete();
+			}, asyncContext::complete);
 
 		asyncContext.addListener(new AsyncListener() {
 			@Override
@@ -245,18 +249,48 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 			@Override
 			public void onTimeout(AsyncEvent event) {
-				subscription[0].dispose();
+				subscription.dispose();
 			}
 
 			@Override
 			public void onError(AsyncEvent event) {
-				subscription[0].dispose();
+				subscription.dispose();
 			}
 
 			@Override
 			public void onStartAsync(AsyncEvent event) {
 			}
 		});
+	}
+
+	private PrintWriter startEventStream(HttpServletResponse response) throws IOException {
+		response.setContentType(TEXT_EVENT_STREAM);
+		response.setCharacterEncoding(UTF_8);
+		response.setHeader("Cache-Control", "no-cache");
+		response.setHeader("X-Accel-Buffering", "no");
+		response.setStatus(HttpServletResponse.SC_OK);
+		response.flushBuffer();
+		return response.getWriter();
+	}
+
+	/**
+	 * Writes and flushes one SSE event. {@link PrintWriter} swallows I/O errors, so a
+	 * closed client is detected via {@link PrintWriter#checkError()} and rethrown to end
+	 * the stream.
+	 */
+	private void writeEvent(PrintWriter writer, JSONRPCMessage message) {
+		String json;
+		try {
+			json = this.jsonMapper.writeValueAsString(message);
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
+		writer.write("event: message\ndata: " + json + "\n\n");
+		writer.flush();
+		if (writer.checkError()) {
+			throw new UncheckedIOException(new IOException("Client disconnected"));
+		}
 	}
 
 	private void writeUnaryResponse(HttpServletResponse response, JSONRPCResponse jsonRpcResponse) throws IOException {
@@ -404,6 +438,12 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return this;
 		}
 
+		/**
+		 * Extracts the {@link McpTransportContext} handlers see through
+		 * {@code McpRequestContext#transportContext()}. Invoked once per POST, on the
+		 * container thread, before the request is resolved - so it can capture
+		 * thread-local state for async code, which may run elsewhere.
+		 */
 		public Builder contextExtractor(McpTransportContextExtractor<HttpServletRequest> contextExtractor) {
 			Assert.notNull(contextExtractor, "contextExtractor must not be null");
 			this.contextExtractor = contextExtractor;

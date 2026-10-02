@@ -28,7 +28,7 @@ class HmacRequestStateCodecTests {
 				io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION, MetaKeys.CLIENT_CAPABILITIES,
 				Map.of());
 		return new McpRequestContext(1, method, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION,
-				ClientCapabilities.NONE, null, null, null, primitiveName, meta, tc, false);
+				ClientCapabilities.NONE, null, null, null, primitiveName, meta, tc, false, false);
 	}
 
 	private static HmacRequestStateCodec codec(Clock clock) {

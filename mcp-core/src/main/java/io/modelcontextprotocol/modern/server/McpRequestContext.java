@@ -45,9 +45,11 @@ public final class McpRequestContext {
 
 	private final boolean retry;
 
+	private final boolean blocking;
+
 	McpRequestContext(Object requestId, String method, String protocolVersion, ClientCapabilities clientCapabilities,
 			Implementation clientInfo, LoggingLevel logLevel, Object progressToken, String primitiveName,
-			Map<String, Object> meta, McpTransportContext transportContext, boolean retry) {
+			Map<String, Object> meta, McpTransportContext transportContext, boolean retry, boolean blocking) {
 		Assert.notNull(requestId, "requestId must not be null");
 		Assert.hasText(method, "method must not be empty");
 		Assert.hasText(protocolVersion, "protocolVersion must not be empty");
@@ -63,6 +65,7 @@ public final class McpRequestContext {
 		this.meta = meta == null ? Map.of() : meta;
 		this.transportContext = transportContext == null ? McpTransportContext.EMPTY : transportContext;
 		this.retry = retry;
+		this.blocking = blocking;
 	}
 
 	/** The JSON-RPC id of the request being served. */
@@ -126,6 +129,17 @@ public final class McpRequestContext {
 	 */
 	public boolean isRetry() {
 		return this.retry;
+	}
+
+	/**
+	 * Whether the transport resolved this request through
+	 * {@link McpRequestHandler#resolveBlocking}: the calling thread waits for the request
+	 * to complete, so sync code may run on it and see the thread-locals it carries. When
+	 * {@code false}, sync code must be moved off the calling thread. Custom
+	 * {@link McpFeature}s that run sync code make the same decision the built-in ones do.
+	 */
+	public boolean isBlocking() {
+		return this.blocking;
 	}
 
 	/**

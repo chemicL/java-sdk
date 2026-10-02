@@ -17,8 +17,8 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRouter;
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.util.Assert;
@@ -127,12 +127,12 @@ public final class PromptsFeature implements McpFeature {
 		return new McpAsyncPromptRepository() {
 			@Override
 			public Mono<PromptsPage> list(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.unary(() -> repository.list(ctx, cursor));
+				return SyncAdapters.unary(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
 			public Mono<AsyncPromptHandler> resolve(McpRequestContext ctx, String name) {
-				return SyncAdapters.unary(() -> repository.resolve(ctx, name))
+				return SyncAdapters.unary(ctx, () -> repository.resolve(ctx, name))
 					.flatMap(handler -> handler == null ? Mono.empty() : Mono.just(adapt(handler)));
 			}
 		};
@@ -140,10 +140,10 @@ public final class PromptsFeature implements McpFeature {
 
 	private static AsyncPromptHandler adapt(SyncPromptHandler handler) {
 		if (handler instanceof SyncPromptHandler.Streaming streaming) {
-			return (AsyncPromptHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(notifier,
+			return (AsyncPromptHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(ctx, notifier,
 					syncNotifier -> streaming.get(ctx, request, syncNotifier));
 		}
-		return AsyncPromptHandler.withInput((ctx, request) -> SyncAdapters.unary(() -> handler.get(ctx, request)));
+		return AsyncPromptHandler.withInput((ctx, request) -> SyncAdapters.unary(ctx, () -> handler.get(ctx, request)));
 	}
 
 }

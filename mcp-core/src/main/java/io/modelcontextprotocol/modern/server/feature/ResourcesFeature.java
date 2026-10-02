@@ -18,8 +18,8 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRouter;
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.util.Assert;
@@ -147,17 +147,17 @@ public final class ResourcesFeature implements McpFeature {
 		return new McpAsyncResourceRepository() {
 			@Override
 			public Mono<ResourcesPage> list(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.unary(() -> repository.list(ctx, cursor));
+				return SyncAdapters.unary(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
 			public Mono<ResourceTemplatesPage> listTemplates(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.unary(() -> repository.listTemplates(ctx, cursor));
+				return SyncAdapters.unary(ctx, () -> repository.listTemplates(ctx, cursor));
 			}
 
 			@Override
 			public Mono<AsyncResourceHandler> resolve(McpRequestContext ctx, String uri) {
-				return SyncAdapters.unary(() -> repository.resolve(ctx, uri))
+				return SyncAdapters.unary(ctx, () -> repository.resolve(ctx, uri))
 					.flatMap(handler -> handler == null ? Mono.empty() : Mono.just(adapt(handler)));
 			}
 		};
@@ -165,10 +165,11 @@ public final class ResourcesFeature implements McpFeature {
 
 	private static AsyncResourceHandler adapt(SyncResourceHandler handler) {
 		if (handler instanceof SyncResourceHandler.Streaming streaming) {
-			return (AsyncResourceHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(notifier,
+			return (AsyncResourceHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(ctx, notifier,
 					syncNotifier -> streaming.read(ctx, request, syncNotifier));
 		}
-		return AsyncResourceHandler.withInput((ctx, request) -> SyncAdapters.unary(() -> handler.read(ctx, request)));
+		return AsyncResourceHandler
+			.withInput((ctx, request) -> SyncAdapters.unary(ctx, () -> handler.read(ctx, request)));
 	}
 
 }

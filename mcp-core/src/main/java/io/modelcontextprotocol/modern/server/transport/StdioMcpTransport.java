@@ -19,7 +19,6 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestHandler;
-import io.modelcontextprotocol.modern.server.McpSchedulers;
 import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
 import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
 import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
@@ -40,8 +39,9 @@ import reactor.core.scheduler.Schedulers;
  * A single dedicated thread reads stdin and dispatches; it never blocks on a request's
  * own completion, so a slow request cannot delay a faster concurrent one, and a
  * {@code notifications/cancelled} for one request is always readable while others are in
- * flight. Writes are serialized through one sink onto one dedicated writer thread. Sync
- * handlers run on {@code boundedElastic}, never on the reader thread.
+ * flight: requests are resolved with {@link McpRequestHandler#resolveNonBlocking}, so
+ * sync repositories and handlers never run on the reader thread. Writes are serialized
+ * through one sink onto one dedicated writer thread.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -173,7 +173,7 @@ public class StdioMcpTransport {
 
 	private void dispatch(JSONRPCRequest request) {
 		String key = String.valueOf(request.id());
-		Flux<JSONRPCMessage> flux = this.requestHandler.resolve(McpTransportContext.EMPTY, request)
+		Flux<JSONRPCMessage> flux = this.requestHandler.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.flatMapMany(invocation -> {
 				if (invocation instanceof McpInvocation.Streaming streaming) {
 					return streaming.messages();
@@ -181,10 +181,7 @@ public class StdioMcpTransport {
 				return ((McpInvocation.Unary) invocation).response().flux();
 			});
 
-		Disposable subscription = flux
-			.contextWrite(ctx -> ctx.put(McpSchedulers.HANDLER_SCHEDULER_KEY, Schedulers.boundedElastic())
-				.put(McpSchedulers.STREAMING_SCHEDULER_KEY, Schedulers.boundedElastic()))
-			.doFinally(signal -> this.inFlight.remove(key))
+		Disposable subscription = flux.doFinally(signal -> this.inFlight.remove(key))
 			.subscribe(this::emit, err -> logger.warn("Unhandled error dispatching request {}", key, err));
 
 		this.inFlight.put(key, subscription);

@@ -60,7 +60,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of());
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> {
 				assertThat(response.error()).isNotNull();
@@ -77,7 +77,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
@@ -90,7 +90,7 @@ class McpServerTests {
 				Map.of("_meta", metaWith(MetaKeys.PROTOCOL_VERSION, "1999-01-01")));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(
 					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
@@ -103,7 +103,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("does/not/exist", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.METHOD_NOT_FOUND))
 			.verifyComplete();
@@ -117,7 +117,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
@@ -129,7 +129,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> {
 				@SuppressWarnings("unchecked")
@@ -158,7 +158,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("server/discover", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> {
 				@SuppressWarnings("unchecked")
@@ -188,7 +188,7 @@ class McpServerTests {
 		Map<String, Object> meta = metaWith(MetaKeys.PROGRESS_TOKEN, "tok-1");
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta));
 
-		var invocation = server.resolve(McpTransportContext.EMPTY, request).block();
+		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
 		assertThat(invocation).isInstanceOf(McpInvocation.Streaming.class);
 
 		StepVerifier.create(((McpInvocation.Streaming) invocation).messages())
@@ -212,7 +212,8 @@ class McpServerTests {
 		McpServer server = baseBuilder().feature(feature).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
 
-		var invocation = (McpInvocation.Streaming) server.resolve(McpTransportContext.EMPTY, request).block();
+		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
+			.block();
 		StepVerifier.create(invocation.messages())
 			.expectNextMatches(msg -> msg instanceof io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse)
 			.verifyComplete();
@@ -226,7 +227,7 @@ class McpServerTests {
 		JSONRPCRequest request = new JSONRPCRequest("resources/list", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
-			.create(server.resolve(McpTransportContext.EMPTY, request)
+			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();

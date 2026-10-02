@@ -65,7 +65,8 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true, "promptsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 7, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolve(McpTransportContext.EMPTY, request).block();
+		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
+			.block();
 
 		// The feed has no buffered replay, so emit only after the listen stream has
 		// actually subscribed - otherwise the change is dropped before anyone is
@@ -105,7 +106,8 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 1, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolve(McpTransportContext.EMPTY, request).block();
+		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
+			.block();
 
 		StepVerifier.create(invocation.messages())
 			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
@@ -134,7 +136,8 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 42, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolve(McpTransportContext.EMPTY, request).block();
+		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
+			.block();
 		server.closeGracefully();
 
 		StepVerifier.create(invocation.messages()).assertNext(msg -> {

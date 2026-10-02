@@ -130,11 +130,21 @@ public final class McpServer implements McpRequestHandler {
 	}
 
 	@Override
-	public Mono<McpInvocation> resolve(McpTransportContext transportContext, JSONRPCRequest request) {
+	public Mono<McpInvocation> resolveBlocking(McpTransportContext transportContext, JSONRPCRequest request) {
+		return resolve(transportContext, request, true);
+	}
+
+	@Override
+	public Mono<McpInvocation> resolveNonBlocking(McpTransportContext transportContext, JSONRPCRequest request) {
+		return resolve(transportContext, request, false);
+	}
+
+	private Mono<McpInvocation> resolve(McpTransportContext transportContext, JSONRPCRequest request,
+			boolean blocking) {
 		return Mono.defer(() -> {
 			Object id = request.id();
 			try {
-				return doResolve(transportContext, request, id);
+				return doResolve(transportContext, request, id, blocking);
 			}
 			catch (Exception ex) {
 				return Mono.just(McpInvocation.unary(Mono.just(errorResponse(id, ex))));
@@ -142,7 +152,8 @@ public final class McpServer implements McpRequestHandler {
 		});
 	}
 
-	private Mono<McpInvocation> doResolve(McpTransportContext transportContext, JSONRPCRequest request, Object id) {
+	private Mono<McpInvocation> doResolve(McpTransportContext transportContext, JSONRPCRequest request, Object id,
+			boolean blocking) {
 		Map<String, Object> paramsMap = toParamsMap(request.params());
 		if (paramsMap == null) {
 			return unaryError(id, ErrorCodes.INVALID_PARAMS, "params is required");
@@ -183,7 +194,7 @@ public final class McpServer implements McpRequestHandler {
 		boolean retry = paramsMap.get("inputResponses") != null || paramsMap.get("requestState") != null;
 
 		McpRequestContext ctx = new McpRequestContext(id, request.method(), protocolVersion, clientCapabilities,
-				clientInfo, logLevel, progressToken, primitiveName, meta, transportContext, retry);
+				clientInfo, logLevel, progressToken, primitiveName, meta, transportContext, retry, blocking);
 
 		Map<String, Object> effectiveParams = paramsMap;
 		if (retry && MRTR_ELIGIBLE_METHODS.contains(request.method())) {

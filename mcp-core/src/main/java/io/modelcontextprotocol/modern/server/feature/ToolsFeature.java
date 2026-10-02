@@ -127,13 +127,13 @@ public final class ToolsFeature implements McpFeature {
 		return new McpAsyncToolRepository() {
 			@Override
 			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
-				return SyncAdapters.unary(() -> repository.list(ctx, cursor));
+				return SyncAdapters.unary(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
 			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
 					String name) {
-				return SyncAdapters.unary(() -> repository.resolve(ctx, name))
+				return SyncAdapters.unary(ctx, () -> repository.resolve(ctx, name))
 					.flatMap(handler -> handler == null ? Mono.empty() : Mono.just(adapt(handler)));
 			}
 		};
@@ -141,10 +141,10 @@ public final class ToolsFeature implements McpFeature {
 
 	private static AsyncToolHandler adapt(SyncToolHandler handler) {
 		if (handler instanceof SyncToolHandler.Streaming streaming) {
-			return (AsyncToolHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(notifier,
+			return (AsyncToolHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(ctx, notifier,
 					syncNotifier -> streaming.call(ctx, request, syncNotifier));
 		}
-		return AsyncToolHandler.withInput((ctx, request) -> SyncAdapters.unary(() -> handler.call(ctx, request)));
+		return AsyncToolHandler.withInput((ctx, request) -> SyncAdapters.unary(ctx, () -> handler.call(ctx, request)));
 	}
 
 }

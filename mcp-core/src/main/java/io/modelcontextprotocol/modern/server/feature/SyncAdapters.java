@@ -7,15 +7,16 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.concurrent.Callable;
 
 import io.modelcontextprotocol.modern.server.McpAsyncNotifier;
-import io.modelcontextprotocol.modern.server.McpSchedulers;
+import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpSyncNotifier;
 import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
- * Bridges sync repositories and handlers onto Reactor, running on whichever scheduler the
- * transport wrote into the context (see {@link McpSchedulers}) - never on a flag the SDK
- * itself decides.
+ * Bridges sync repositories and handlers onto Reactor. Where the sync code runs is
+ * decided per request by {@link McpRequestContext#isBlocking()}: on the calling thread
+ * for a blocking caller, on {@code boundedElastic} otherwise.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -24,17 +25,17 @@ final class SyncAdapters {
 	private SyncAdapters() {
 	}
 
-	static <T> Mono<T> unary(Callable<T> call) {
-		return Mono.deferContextual(
-				contextView -> Mono.fromCallable(call).subscribeOn(McpSchedulers.handlerScheduler(contextView)));
+	static <T> Mono<T> unary(McpRequestContext ctx, Callable<T> call) {
+		return onCallerOrOffload(ctx, Mono.fromCallable(call));
 	}
 
-	static <RES> Mono<RES> streaming(McpAsyncNotifier asyncNotifier, SyncCall<RES> call) {
-		return Mono.deferContextual(contextView -> {
-			var scheduler = McpSchedulers.streamingScheduler(contextView);
-			McpSyncNotifier syncNotifier = new BlockingSyncNotifier(asyncNotifier);
-			return Mono.fromCallable(() -> call.call(syncNotifier)).subscribeOn(scheduler);
-		});
+	static <RES> Mono<RES> streaming(McpRequestContext ctx, McpAsyncNotifier asyncNotifier, SyncCall<RES> call) {
+		McpSyncNotifier syncNotifier = new BlockingSyncNotifier(asyncNotifier);
+		return onCallerOrOffload(ctx, Mono.fromCallable(() -> call.call(syncNotifier)));
+	}
+
+	private static <T> Mono<T> onCallerOrOffload(McpRequestContext ctx, Mono<T> mono) {
+		return ctx.isBlocking() ? mono : mono.subscribeOn(Schedulers.boundedElastic());
 	}
 
 	@FunctionalInterface
@@ -45,9 +46,9 @@ final class SyncAdapters {
 	}
 
 	/**
-	 * Blocks on the async notifier's (synchronous, non-blocking-in-practice) Monos. Safe
-	 * here because this is only ever invoked from inside the {@code Mono.fromCallable}
-	 * above, already running on a blocking-capable scheduler.
+	 * Blocks on the async notifier's Monos, which complete synchronously once the
+	 * notification is handed to the stream. Only ever invoked from sync handler code,
+	 * which by construction runs on a thread allowed to block.
 	 */
 	private static final class BlockingSyncNotifier implements McpSyncNotifier {
 
