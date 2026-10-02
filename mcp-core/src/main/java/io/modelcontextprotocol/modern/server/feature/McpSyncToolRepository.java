@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 
 /**
@@ -18,6 +20,6 @@ public interface McpSyncToolRepository {
 	/**
 	 * @return the handler, or {@code null} if no such tool exists
 	 */
-	SyncToolHandler resolve(McpRequestContext ctx, String name);
+	SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name);
 
 }

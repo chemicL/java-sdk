@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
@@ -26,7 +27,7 @@ import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
-import io.modelcontextprotocol.modern.server.feature.SyncToolHandler;
+import io.modelcontextprotocol.modern.server.feature.SyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
 import io.modelcontextprotocol.util.ToolsUtils;
@@ -47,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Sync user code served by {@link HttpServletMcpTransport} sees thread-locals a servlet
- * filter populated, for unary and streaming responses alike - the guarantee Spring
+ * filter populated, for single and streaming responses alike - the guarantee Spring
  * Security's {@code SecurityContextHolder} relies on.
  */
 class HttpServletMcpTransportThreadLocalIntegrationTests {
@@ -112,10 +113,10 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 			}
 
 			@Override
-			public SyncToolHandler resolve(McpRequestContext ctx, String name) {
+			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
 				return switch (name) {
-					case "whoami" -> SyncToolHandler.of((c, req) -> text(whoami()));
-					case "whoami-streaming" -> SyncToolHandler.streaming((c, req, notifier) -> {
+					case "whoami" -> SyncFeatureHandler.of((c, req) -> text(whoami()));
+					case "whoami-streaming" -> SyncFeatureHandler.streaming((c, req, notifier) -> {
 						notifier.progress(0.5, 1.0, whoami());
 						boolean released;
 						try {
@@ -197,7 +198,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 	}
 
 	@Test
-	void syncUnaryHandlerSeesFilterThreadLocalOnFilterThread() throws Exception {
+	void syncSingleHandlerSeesFilterThreadLocalOnFilterThread() throws Exception {
 		HttpResponse<String> response = HttpClient.newHttpClient()
 			.send(post("alice", "tools/call", "whoami"), HttpResponse.BodyHandlers.ofString());
 

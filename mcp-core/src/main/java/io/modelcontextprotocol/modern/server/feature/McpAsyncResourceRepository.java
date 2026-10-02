@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import reactor.core.publisher.Mono;
 
@@ -24,6 +26,6 @@ public interface McpAsyncResourceRepository {
 	 * @return the handler for {@code uri}, or {@link Mono#empty()} if it doesn't exist
 	 * (answered as {@code -32602})
 	 */
-	Mono<AsyncResourceHandler> resolve(McpRequestContext ctx, String uri);
+	Mono<AsyncFeatureHandler<ReadResourceRequest, ReadResourceResult>> resolve(McpRequestContext ctx, String uri);
 
 }

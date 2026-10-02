@@ -14,6 +14,7 @@ import java.util.Map;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
@@ -21,7 +22,7 @@ import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpServer;
-import io.modelcontextprotocol.modern.server.feature.AsyncToolHandler;
+import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
@@ -56,16 +57,16 @@ class HttpServletMcpTransportIntegrationTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
-					String name) {
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
+					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
 				if ("echo".equals(name)) {
-					return Mono.just(AsyncToolHandler.of((c,
+					return Mono.just(AsyncFeatureHandler.of((c,
 							req) -> Mono.just(CallToolResult.builder()
 								.addContent(TextContent.builder("echo:" + req.name()).build())
 								.build())));
 				}
 				if ("streamer".equals(name)) {
-					return Mono.just(AsyncToolHandler.streaming((c, req, notifier) -> notifier
+					return Mono.just(AsyncFeatureHandler.streaming((c, req, notifier) -> notifier
 						.progress(1.0, 1.0, "done")
 						.thenReturn(
 								CallToolResult.builder().addContent(TextContent.builder("streamed").build()).build())));
@@ -141,7 +142,7 @@ class HttpServletMcpTransportIntegrationTests {
 	}
 
 	@Test
-	void unaryToolCallReturnsJson() throws Exception {
+	void singleToolCallReturnsJson() throws Exception {
 		Map<String, Object> params = new java.util.HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "echo");

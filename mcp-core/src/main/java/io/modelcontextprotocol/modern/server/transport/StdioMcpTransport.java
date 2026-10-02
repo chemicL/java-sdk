@@ -22,7 +22,7 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.server.McpInvocation;
-import io.modelcontextprotocol.modern.server.McpRequestHandler;
+import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,13 +34,13 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * A newline-delimited stdio transport for a modern {@link McpRequestHandler}. There is no
+ * A newline-delimited stdio transport for a modern {@link McpRequestManager}. There is no
  * session and no framing beyond one JSON-RPC message per line.
  * <p>
  * A single dedicated thread reads stdin and dispatches; it never blocks on a request's
  * own completion, so a slow request cannot delay a faster concurrent one, and a
  * {@code notifications/cancelled} for one request is always readable while others are in
- * flight: requests are resolved with {@link McpRequestHandler#resolveNonBlocking}, so
+ * flight: requests are resolved with {@link McpRequestManager#resolveNonBlocking}, so
  * sync repositories and handlers never run on the reader thread. Writes are serialized
  * through one sink onto one dedicated writer thread.
  *
@@ -50,7 +50,7 @@ public class StdioMcpTransport {
 
 	private static final Logger logger = LoggerFactory.getLogger(StdioMcpTransport.class);
 
-	private final McpRequestHandler requestHandler;
+	private final McpRequestManager requestManager;
 
 	private final McpJsonMapper jsonMapper;
 
@@ -74,15 +74,15 @@ public class StdioMcpTransport {
 
 	private volatile boolean closing = false;
 
-	public StdioMcpTransport(McpRequestHandler requestHandler, McpJsonMapper jsonMapper) {
-		this(requestHandler, jsonMapper, System.in, System.out);
+	public StdioMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper) {
+		this(requestManager, jsonMapper, System.in, System.out);
 	}
 
-	public StdioMcpTransport(McpRequestHandler requestHandler, McpJsonMapper jsonMapper, InputStream in,
+	public StdioMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, InputStream in,
 			OutputStream out) {
-		Assert.notNull(requestHandler, "requestHandler must not be null");
+		Assert.notNull(requestManager, "requestManager must not be null");
 		Assert.notNull(jsonMapper, "jsonMapper must not be null");
-		this.requestHandler = requestHandler;
+		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.in = in;
 		this.out = out;
@@ -146,7 +146,7 @@ public class StdioMcpTransport {
 				handleCancel(notification);
 			}
 			else {
-				this.requestHandler.handleNotification(McpTransportContext.EMPTY, notification).subscribe(v -> {
+				this.requestManager.handleNotification(McpTransportContext.EMPTY, notification).subscribe(v -> {
 				}, err -> logger.warn("Failed to handle notification", err));
 			}
 			return;
@@ -174,12 +174,12 @@ public class StdioMcpTransport {
 
 	private void dispatch(JSONRPCRequest request) {
 		String key = String.valueOf(request.id());
-		Flux<JSONRPCMessage> flux = this.requestHandler.resolveNonBlocking(McpTransportContext.EMPTY, request)
+		Flux<JSONRPCMessage> flux = this.requestManager.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.flatMapMany(invocation -> {
 				if (invocation instanceof McpInvocation.Streaming streaming) {
 					return streaming.messages();
 				}
-				return ((McpInvocation.Unary) invocation).response().flux();
+				return ((McpInvocation.Single) invocation).response().flux();
 			});
 
 		Disposable subscription = flux.doFinally(signal -> this.inFlight.remove(key))

@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import reactor.core.publisher.Mono;
 
@@ -26,6 +28,6 @@ public interface McpAsyncToolRepository {
 	 * @return the handler, or {@link Mono#empty()} if no such tool exists (answered as
 	 * {@code -32602})
 	 */
-	Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name);
+	Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx, String name);
 
 }

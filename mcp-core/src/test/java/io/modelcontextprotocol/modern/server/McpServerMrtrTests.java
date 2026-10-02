@@ -10,17 +10,18 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ElicitFormRequest;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.TextResourceContents;
-import io.modelcontextprotocol.modern.server.feature.AsyncResourceHandler;
-import io.modelcontextprotocol.modern.server.feature.AsyncToolHandler;
+import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncResourceRepository;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
@@ -63,8 +64,9 @@ class McpServerMrtrTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name) {
-				return Mono.just(AsyncToolHandler.withInput((c, req) -> {
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
+				return Mono.just(AsyncFeatureHandler.withInput((c, req) -> {
 					if (req.requestState() != null) {
 						seenRequestState.set(req.requestState());
 						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult.complete(
@@ -89,7 +91,7 @@ class McpServerMrtrTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
 
 		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
+			.flatMap(inv -> ((McpInvocation.Single) inv).response())
 			.block();
 
 		@SuppressWarnings("unchecked")
@@ -105,7 +107,7 @@ class McpServerMrtrTests {
 		JSONRPCRequest retryRequest = new JSONRPCRequest("tools/call", 2, retryParams);
 
 		var retryResponse = server.resolveNonBlocking(McpTransportContext.EMPTY, retryRequest)
-			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
+			.flatMap(inv -> ((McpInvocation.Single) inv).response())
 			.block();
 
 		assertThat(retryResponse.error()).isNull();
@@ -121,13 +123,15 @@ class McpServerMrtrTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name) {
-				return Mono.just(AsyncToolHandler.withInput((c,
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
+				return Mono.just(AsyncFeatureHandler.withInput((c,
 						req) -> Mono.just(inputRequired(InputRequiredResult.builder()
 							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
 							.build()))));
 				// FIXME: This paradigm can fail because you could do this:
-				// return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(new
+				// return Mono.just(AsyncFeatureHandler.withInput((c, req) ->
+				// Mono.just(new
 				// McpRoundResult<CallToolResult>() {
 				// @Override
 				// public McpSchema.Result result() {
@@ -149,7 +153,7 @@ class McpServerMrtrTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code())
 				.isEqualTo(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY))
 			.verifyComplete();
@@ -164,10 +168,12 @@ class McpServerMrtrTests {
 			}
 
 			@Override
-			public Mono<AsyncResourceHandler> resolve(McpRequestContext ctx, String uri) {
-				return Mono.just(AsyncResourceHandler.of((c, req) -> Mono.just(ReadResourceResult
-					.builder(List.of(new TextResourceContents(req.uri(), "text/plain", "content", null)))
-					.build())));
+			public Mono<AsyncFeatureHandler<ReadResourceRequest, ReadResourceResult>> resolve(McpRequestContext ctx,
+					String uri) {
+				return Mono.just(AsyncFeatureHandler.of((c,
+						req) -> Mono.just(ReadResourceResult
+							.builder(List.of(new TextResourceContents(req.uri(), "text/plain", "content", null)))
+							.build())));
 			}
 		};
 		McpServer server = McpServer.builder()
@@ -183,7 +189,7 @@ class McpServerMrtrTests {
 		JSONRPCRequest request = new JSONRPCRequest("resources/read", 1, params);
 
 		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMap(inv -> ((McpInvocation.Unary) inv).response())
+			.flatMap(inv -> ((McpInvocation.Single) inv).response())
 			.block();
 
 		@SuppressWarnings("unchecked")

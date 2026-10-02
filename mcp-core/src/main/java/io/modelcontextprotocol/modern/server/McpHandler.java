@@ -8,9 +8,13 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import reactor.core.publisher.Mono;
 
 /**
- * The generic handler a {@link McpRouter} resolves to. Application code never implements
- * this directly; it implements the typed per-primitive handler interfaces (e.g.
- * {@code AsyncToolHandler}) that features adapt to this shape.
+ * The generic handler a {@link McpFeature} resolves to. Application code never implements
+ * this directly; it implements the typed {@code AsyncFeatureHandler} or
+ * {@code SyncFeatureHandler} that features adapt to this shape.
+ * <p>
+ * A handler is either single (answered with one response) or {@link Streaming} (may push
+ * notifications before its response). This is independent of sync vs async, which is only
+ * the programming paradigm the application code is written in.
  * <p>
  * {@link Streaming} is a distinct sub-interface, checked with {@code instanceof} at
  * dispatch time, rather than a flag - so the transport knows whether to answer with
@@ -21,7 +25,7 @@ import reactor.core.publisher.Mono;
  */
 public interface McpHandler {
 
-	/** Handle a unary request and complete with its result. */
+	/** Handle a request that is answered with a single response. */
 	Mono<Result> handle(McpRequestContext ctx, Object params);
 
 	/**

@@ -42,7 +42,7 @@ class CompletionsFeatureTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}

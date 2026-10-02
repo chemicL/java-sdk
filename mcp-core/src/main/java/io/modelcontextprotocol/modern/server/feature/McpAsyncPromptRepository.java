@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
+import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import reactor.core.publisher.Mono;
 
@@ -20,6 +22,6 @@ public interface McpAsyncPromptRepository {
 	 * @return the handler for {@code name}, or {@link Mono#empty()} if it doesn't exist
 	 * (answered as {@code -32602})
 	 */
-	Mono<AsyncPromptHandler> resolve(McpRequestContext ctx, String name);
+	Mono<AsyncFeatureHandler<GetPromptRequest, GetPromptResult>> resolve(McpRequestContext ctx, String name);
 
 }

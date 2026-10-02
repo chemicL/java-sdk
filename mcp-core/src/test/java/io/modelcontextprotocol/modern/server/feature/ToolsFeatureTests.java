@@ -16,6 +16,7 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
@@ -60,8 +61,8 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
-					String name) {
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
+					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
 				return Mono.empty();
 			}
 		};
@@ -70,13 +71,13 @@ class ToolsFeatureTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}
 
 	@Test
-	void asyncUnaryHandlerAnswersAsUnary() {
+	void asyncSingleHandlerAnswersAsSingle() {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
 			@Override
 			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
@@ -84,9 +85,9 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
-					String name) {
-				return Mono.just(AsyncToolHandler.of((c,
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
+					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
+				return Mono.just(AsyncFeatureHandler.of((c,
 						req) -> Mono.just(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
 							.addContent(TextContent.builder("echo:" + req.name()).build())
 							.build())));
@@ -96,7 +97,7 @@ class ToolsFeatureTests {
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
 
 		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
-		assertThat(invocation).isInstanceOf(McpInvocation.Unary.class);
+		assertThat(invocation).isInstanceOf(McpInvocation.Single.class);
 	}
 
 	@Test
@@ -108,9 +109,9 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
-					String name) {
-				return Mono.just(AsyncToolHandler.streaming((c, req, notifier) -> notifier.progress(1.0, 1.0, "done")
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
+					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
+				return Mono.just(AsyncFeatureHandler.streaming((c, req, notifier) -> notifier.progress(1.0, 1.0, "done")
 					.thenReturn(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
 						.addContent(TextContent.builder("ok").build())
 						.build())));
@@ -144,7 +145,7 @@ class ToolsFeatureTests {
 		return (String) content.get(0).get("text");
 	}
 
-	private static McpSyncToolRepository unaryGreetingRepo(Function<McpRequestContext, String> principal,
+	private static McpSyncToolRepository singleGreetingRepo(Function<McpRequestContext, String> principal,
 			AtomicReference<String> handlerThread) {
 		return new McpSyncToolRepository() {
 			@Override
@@ -153,8 +154,8 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncToolHandler resolve(McpRequestContext ctx, String name) {
-				return SyncToolHandler.of((c, req) -> {
+			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
+				return SyncFeatureHandler.of((c, req) -> {
 					handlerThread.set(Thread.currentThread().getName());
 					return greeting(principal.apply(c));
 				});
@@ -176,8 +177,8 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncToolHandler resolve(McpRequestContext ctx, String name) {
-				return SyncToolHandler.streaming((c, req, notifier) -> {
+			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
+				return SyncFeatureHandler.streaming((c, req, notifier) -> {
 					handlerThread.set(Thread.currentThread().getName());
 					notifier.progress(1.0, 1.0, "greeting");
 					deliveredWhenProgressReturned.set(delivered.size());
@@ -187,8 +188,8 @@ class ToolsFeatureTests {
 		};
 	}
 
-	private static JSONRPCResponse callUnary(Mono<McpInvocation> invocation) {
-		return invocation.flatMap(inv -> ((McpInvocation.Unary) inv).response()).block();
+	private static JSONRPCResponse callSingle(Mono<McpInvocation> invocation) {
+		return invocation.flatMap(inv -> ((McpInvocation.Single) inv).response()).block();
 	}
 
 	private static List<JSONRPCMessage> callStreaming(Mono<McpInvocation> invocation, List<JSONRPCMessage> delivered) {
@@ -197,14 +198,14 @@ class ToolsFeatureTests {
 	}
 
 	@Test
-	void blockingCallerRunsSyncUnaryHandlerOnItsOwnThread() {
+	void blockingCallerRunsSyncSingleHandlerOnItsOwnThread() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
-		McpServer server = baseBuilder().tools(unaryGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
+		McpServer server = baseBuilder().tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
 
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
 		try {
-			response = callUnary(server.resolveBlocking(McpTransportContext.EMPTY, callEcho()));
+			response = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, callEcho()));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -249,7 +250,7 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncToolHandler resolve(McpRequestContext ctx, String name) {
+			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
 				return null;
 			}
 		};
@@ -260,9 +261,9 @@ class ToolsFeatureTests {
 		JSONRPCResponse asAdmin;
 		JSONRPCResponse asAnonymous;
 		try {
-			asAdmin = callUnary(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
+			asAdmin = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
 			PRINCIPAL.remove();
-			asAnonymous = callUnary(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
+			asAnonymous = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -273,14 +274,14 @@ class ToolsFeatureTests {
 	}
 
 	@Test
-	void nonBlockingCallerOffloadsSyncUnaryHandler() {
+	void nonBlockingCallerOffloadsSyncSingleHandler() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
-		McpServer server = baseBuilder().tools(unaryGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
+		McpServer server = baseBuilder().tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
 
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
 		try {
-			response = callUnary(server.resolveNonBlocking(McpTransportContext.EMPTY, callEcho()));
+			response = callSingle(server.resolveNonBlocking(McpTransportContext.EMPTY, callEcho()));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -315,11 +316,11 @@ class ToolsFeatureTests {
 	void offloadedSyncHandlerSeesPrincipalCapturedInTransportContext() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
 		McpServer server = baseBuilder()
-			.tools(unaryGreetingRepo(c -> (String) c.transportContext().get("principal"), handlerThread))
+			.tools(singleGreetingRepo(c -> (String) c.transportContext().get("principal"), handlerThread))
 			.build();
 		McpTransportContext transportContext = McpTransportContext.create(Map.of("principal", "alice"));
 
-		JSONRPCResponse response = callUnary(server.resolveNonBlocking(transportContext, callEcho()));
+		JSONRPCResponse response = callSingle(server.resolveNonBlocking(transportContext, callEcho()));
 
 		assertThat(handlerThread.get()).startsWith("boundedElastic-");
 		assertThat(greetingText(response)).isEqualTo("hello alice");
@@ -331,10 +332,10 @@ class ToolsFeatureTests {
 			.builder()
 			.requestState("s")
 			.build();
-		AsyncToolHandler handler = AsyncToolHandler
+		AsyncFeatureHandler<CallToolRequest, CallToolResult> handler = AsyncFeatureHandler
 			.withInput((ctx, req) -> Mono.just(McpRoundResult.inputRequired(inputRequired)));
 
-		StepVerifier.create(handler.call(null, null)).assertNext(round -> {
+		StepVerifier.create(handler.handle(null, null)).assertNext(round -> {
 			assertThat(round).isInstanceOf(McpRoundResult.InputRequired.class);
 			assertThat(round.result()).isSameAs(inputRequired);
 		}).verifyComplete();

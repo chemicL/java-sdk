@@ -2,7 +2,7 @@
  * Copyright 2026-2026 the original author or authors.
  */
 
-package io.modelcontextprotocol.modern.server.feature;
+package io.modelcontextprotocol.modern.server;
 
 import java.util.List;
 import java.util.Map;
@@ -12,10 +12,16 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
-import io.modelcontextprotocol.modern.server.McpInvocation;
-import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
+import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
+import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.ServerChange;
+import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -37,12 +43,12 @@ class SubscriptionsFeatureTests {
 	private static McpAsyncToolRepository noopTools() {
 		return new McpAsyncToolRepository() {
 			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
 				return Mono.just(ToolsPage.of(List.of()));
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
 					String name) {
 				return Mono.empty();
 			}

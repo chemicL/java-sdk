@@ -2,10 +2,11 @@
  * Copyright 2026-2026 the original author or authors.
  */
 
-package io.modelcontextprotocol.modern.server.feature;
+package io.modelcontextprotocol.modern.server;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpSchema;
@@ -18,28 +19,20 @@ import io.modelcontextprotocol.modern.McpSchema.SubscriptionFilter;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsAcknowledgedParams;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsListenRequest;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsListenResult;
-import io.modelcontextprotocol.modern.server.McpAsyncNotifier;
-import io.modelcontextprotocol.modern.server.McpFeature;
-import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpRequestContext;
-import io.modelcontextprotocol.modern.server.McpRouter;
+import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 /**
- * The {@code subscriptions/listen} feature: a long-lived {@link McpHandler.Streaming}
- * that first acknowledges the honoured subset of the requested filter, then forwards
- * matching changes from a {@link McpChangeFeed}, tagging every message with the listen
- * request's id as {@code _meta.subscriptionId}.
- * <p>
- * Must be added after every other feature: which types it can honour depends on whether
- * tools/prompts/resources are actually registered.
+ * The {@code subscriptions/listen} feature: acknowledges the honoured subset of the
+ * requested filter, then forwards matching changes from a {@link McpChangeFeed}.
  *
  * @author Dariusz Jędrzejczyk
  */
-public final class SubscriptionsFeature implements McpFeature {
+final class SubscriptionsFeature implements McpFeature {
 
 	private final McpChangeFeed feed;
 
@@ -53,7 +46,7 @@ public final class SubscriptionsFeature implements McpFeature {
 
 	private final Sinks.Empty<Void> shutdown = Sinks.empty();
 
-	public SubscriptionsFeature(McpChangeFeed feed, McpJsonMapper jsonMapper, boolean hasTools, boolean hasPrompts,
+	SubscriptionsFeature(McpChangeFeed feed, McpJsonMapper jsonMapper, boolean hasTools, boolean hasPrompts,
 			boolean hasResources) {
 		Assert.notNull(feed, "feed must not be null");
 		this.feed = feed;
@@ -63,19 +56,18 @@ public final class SubscriptionsFeature implements McpFeature {
 		this.hasResources = hasResources;
 	}
 
-	/** Ends every active listen stream with a graceful {@code complete} result. */
-	public void closeGracefully() {
+	void closeGracefully() {
 		this.shutdown.tryEmitEmpty();
 	}
 
 	@Override
-	public McpRouter router() {
-		return ctx -> {
-			if (!McpSchema.METHOD_SUBSCRIPTIONS_LISTEN.equals(ctx.method())) {
-				return Mono.empty();
-			}
-			return Mono.just((McpHandler.Streaming) this::listen);
-		};
+	public Set<String> methods() {
+		return Set.of(McpSchema.METHOD_SUBSCRIPTIONS_LISTEN);
+	}
+
+	@Override
+	public Mono<McpHandler> resolve(McpRequestContext ctx) {
+		return Mono.just((McpHandler.Streaming) this::listen);
 	}
 
 	@Override

@@ -6,6 +6,7 @@ package io.modelcontextprotocol.modern.server;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
@@ -24,6 +25,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McpServerTests {
 
@@ -43,15 +45,23 @@ class McpServerTests {
 		return McpServer.builder().serverInfo(SERVER_INFO).jsonMapper(new GsonMcpJsonMapper());
 	}
 
-	private static McpFeature echoFeature(String method) {
-		return () -> ctx -> {
-			if (!method.equals(ctx.method())) {
-				return Mono.empty();
+	private static McpFeature feature(String method, McpHandler handler) {
+		return new McpFeature() {
+			@Override
+			public Set<String> methods() {
+				return Set.of(method);
 			}
-			McpHandler handler = (c, params) -> Mono
-				.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build());
-			return Mono.just(handler);
+
+			@Override
+			public Mono<McpHandler> resolve(McpRequestContext ctx) {
+				return Mono.just(handler);
+			}
 		};
+	}
+
+	private static McpFeature echoFeature(String method) {
+		return feature(method, (ctx, params) -> Mono
+			.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
 	}
 
 	@Test
@@ -61,7 +71,7 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> {
 				assertThat(response.error()).isNotNull();
 				assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
@@ -78,7 +88,7 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}
@@ -91,7 +101,7 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(
 					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
 			.verifyComplete();
@@ -104,21 +114,20 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.METHOD_NOT_FOUND))
 			.verifyComplete();
 	}
 
 	@Test
 	void handlerExceptionBecomesInternalError() {
-		McpFeature failing = () -> ctx -> Mono
-			.just((McpHandler) (c, params) -> Mono.error(new RuntimeException("boom")));
+		McpFeature failing = feature("tools/call", (ctx, params) -> Mono.error(new RuntimeException("boom")));
 		McpServer server = baseBuilder().feature(failing).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
 	}
@@ -130,7 +139,7 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> {
 				@SuppressWarnings("unchecked")
 				Map<String, Object> result = (Map<String, Object>) response.result();
@@ -145,8 +154,13 @@ class McpServerTests {
 	void discoverReturnsAggregatedCapabilities() {
 		McpFeature toolsCapability = new McpFeature() {
 			@Override
-			public McpRouter router() {
-				return McpRouter.empty();
+			public Set<String> methods() {
+				return Set.of();
+			}
+
+			@Override
+			public Mono<McpHandler> resolve(McpRequestContext ctx) {
+				return Mono.empty();
 			}
 
 			@Override
@@ -159,7 +173,7 @@ class McpServerTests {
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> {
 				@SuppressWarnings("unchecked")
 				Map<String, Object> result = (Map<String, Object>) response.result();
@@ -180,7 +194,7 @@ class McpServerTests {
 					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
 			}
 		};
-		McpFeature feature = () -> ctx -> "tools/call".equals(ctx.method()) ? Mono.just(streaming) : Mono.empty();
+		McpFeature feature = feature("tools/call", streaming);
 		McpServer server = baseBuilder().feature(feature).build();
 
 		Map<String, Object> meta = metaWith(MetaKeys.PROGRESS_TOKEN, "tok-1");
@@ -204,7 +218,7 @@ class McpServerTests {
 					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
 			}
 		};
-		McpFeature feature = () -> ctx -> Mono.just(streaming);
+		McpFeature feature = feature("tools/call", streaming);
 		McpServer server = baseBuilder().feature(feature).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
 
@@ -217,16 +231,31 @@ class McpServerTests {
 
 	@Test
 	void inputRequiredFromDisallowedMethodBecomesInternalError() {
-		McpFeature feature = () -> ctx -> Mono
-			.just((McpHandler) (c, params) -> Mono.just(InputRequiredResult.builder().requestState("s").build()));
+		McpFeature feature = feature("resources/list",
+				(ctx, params) -> Mono.just(InputRequiredResult.builder().requestState("s").build()));
 		McpServer server = baseBuilder().feature(feature).build();
 		JSONRPCRequest request = new JSONRPCRequest("resources/list", 1, Map.of("_meta", metaWith()));
 
 		StepVerifier
 			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Unary) inv).response()))
+				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
+	}
+
+	@Test
+	void methodServedByTwoFeaturesIsRejectedAtBuild() {
+		McpServer.Builder builder = baseBuilder().feature(echoFeature("tools/call")).feature(echoFeature("tools/call"));
+
+		assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class).hasMessageContaining("tools/call");
+	}
+
+	@Test
+	void featureCannotClaimDiscover() {
+		McpServer.Builder builder = baseBuilder().feature(echoFeature("server/discover"));
+
+		assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("server/discover");
 	}
 
 }

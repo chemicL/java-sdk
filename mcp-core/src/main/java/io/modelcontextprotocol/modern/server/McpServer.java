@@ -5,6 +5,7 @@
 package io.modelcontextprotocol.modern.server;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,7 +39,6 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.UnsupportedProtocolVersionData;
 import io.modelcontextprotocol.modern.server.feature.CompletionsFeature;
-import io.modelcontextprotocol.modern.server.feature.DiscoverFeature;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncCompletionRepository;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncPromptRepository;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncResourceRepository;
@@ -50,7 +50,6 @@ import io.modelcontextprotocol.modern.server.feature.McpSyncResourceRepository;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.PromptsFeature;
 import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
-import io.modelcontextprotocol.modern.server.feature.SubscriptionsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
@@ -60,9 +59,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 /**
- * The composition root for a modern MCP server: a stateless, immutable dispatcher over a
- * composed {@link McpRouter} of {@link McpFeature}s, wrapped by any registered
- * {@link McpFilter}s.
+ * The composition root for a modern MCP server: a stateless, immutable dispatcher that
+ * routes each request by method to the {@link McpFeature} serving it.
  * <p>
  * {@code McpServer} owns exactly what must live in one place: {@code _meta} validation
  * and version negotiation, {@code server/discover}, {@code serverInfo} stamping, error
@@ -73,7 +71,7 @@ import reactor.core.publisher.Sinks;
  *
  * @author Dariusz Jędrzejczyk
  */
-public final class McpServer implements McpRequestHandler {
+public final class McpServer implements McpRequestManager {
 
 	private static final Logger logger = LoggerFactory.getLogger(McpServer.class);
 
@@ -86,7 +84,7 @@ public final class McpServer implements McpRequestHandler {
 
 	private final McpJsonMapper jsonMapper;
 
-	private final McpRouter dispatchChain;
+	private final Map<String, McpFeature> routes;
 
 	private final Set<String> inputRequiredMethods;
 
@@ -98,21 +96,15 @@ public final class McpServer implements McpRequestHandler {
 			McpSchema.METHOD_RESOURCES_READ, McpSchema.METHOD_PROMPTS_GET);
 
 	private McpServer(Implementation serverInfo, List<String> supportedVersions, McpJsonMapper jsonMapper,
-			McpRouter router, List<McpFilter> filters, Set<String> inputRequiredMethods,
-			RequestStateCodec requestStateCodec, SubscriptionsFeature subscriptionsFeature) {
+			Map<String, McpFeature> routes, Set<String> inputRequiredMethods, RequestStateCodec requestStateCodec,
+			SubscriptionsFeature subscriptionsFeature) {
 		this.serverInfo = serverInfo;
 		this.supportedVersions = supportedVersions;
 		this.jsonMapper = jsonMapper;
+		this.routes = routes;
 		this.inputRequiredMethods = inputRequiredMethods;
 		this.requestStateCodec = requestStateCodec;
 		this.subscriptionsFeature = subscriptionsFeature;
-		McpRouter chain = router;
-		for (int i = filters.size() - 1; i >= 0; i--) {
-			McpFilter filter = filters.get(i);
-			McpRouter next = chain;
-			chain = ctx -> filter.filter(ctx, next);
-		}
-		this.dispatchChain = chain;
 	}
 
 	public static Builder builder() {
@@ -147,7 +139,7 @@ public final class McpServer implements McpRequestHandler {
 				return doResolve(transportContext, request, id, blocking);
 			}
 			catch (Exception ex) {
-				return Mono.just(McpInvocation.unary(Mono.just(errorResponse(id, ex))));
+				return Mono.just(McpInvocation.single(Mono.just(errorResponse(id, ex))));
 			}
 		});
 	}
@@ -156,23 +148,23 @@ public final class McpServer implements McpRequestHandler {
 			boolean blocking) {
 		Map<String, Object> paramsMap = toParamsMap(request.params());
 		if (paramsMap == null) {
-			return unaryError(id, ErrorCodes.INVALID_PARAMS, "params is required");
+			return singleError(id, ErrorCodes.INVALID_PARAMS, "params is required");
 		}
 		Map<String, Object> meta = asMetaMap(paramsMap.get("_meta"));
 		if (meta == null) {
-			return unaryError(id, ErrorCodes.INVALID_PARAMS, "params._meta is required");
+			return singleError(id, ErrorCodes.INVALID_PARAMS, "params._meta is required");
 		}
 		Object versionRaw = meta.get(MetaKeys.PROTOCOL_VERSION);
 		if (!(versionRaw instanceof String protocolVersion) || protocolVersion.isBlank()) {
-			return unaryError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.PROTOCOL_VERSION + "'] is required");
+			return singleError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.PROTOCOL_VERSION + "'] is required");
 		}
 		Object capabilitiesRaw = meta.get(MetaKeys.CLIENT_CAPABILITIES);
 		if (capabilitiesRaw == null) {
-			return unaryError(id, ErrorCodes.INVALID_PARAMS,
+			return singleError(id, ErrorCodes.INVALID_PARAMS,
 					"_meta['" + MetaKeys.CLIENT_CAPABILITIES + "'] is required");
 		}
 		if (!this.supportedVersions.contains(protocolVersion)) {
-			return unaryError(id, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
+			return singleError(id, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
 					new UnsupportedProtocolVersionData(this.supportedVersions, protocolVersion));
 		}
 
@@ -186,7 +178,7 @@ public final class McpServer implements McpRequestHandler {
 		if (logLevelRaw != null) {
 			logLevel = logLevelRaw instanceof String s ? LoggingLevel.fromValue(s) : null;
 			if (logLevel == null) {
-				return unaryError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.LOG_LEVEL + "'] is invalid");
+				return singleError(id, ErrorCodes.INVALID_PARAMS, "_meta['" + MetaKeys.LOG_LEVEL + "'] is invalid");
 			}
 		}
 		Object progressToken = meta.get(MetaKeys.PROGRESS_TOKEN);
@@ -206,11 +198,15 @@ public final class McpServer implements McpRequestHandler {
 		}
 		Object finalParams = effectiveParams;
 
-		return this.dispatchChain.route(ctx)
+		McpFeature feature = this.routes.get(request.method());
+		if (feature == null) {
+			return singleError(id, ErrorCodes.METHOD_NOT_FOUND, "Method not found: " + request.method());
+		}
+		return feature.resolve(ctx)
 			.map(handler -> dispatch(ctx, handler, finalParams))
-			.switchIfEmpty(Mono.fromSupplier(() -> unaryErrorInvocation(id, ErrorCodes.METHOD_NOT_FOUND,
+			.switchIfEmpty(Mono.fromSupplier(() -> singleErrorInvocation(id, ErrorCodes.METHOD_NOT_FOUND,
 					"Method not found: " + request.method(), null)))
-			.onErrorResume(err -> Mono.just(unaryErrorInvocation(id, err)));
+			.onErrorResume(err -> Mono.just(singleErrorInvocation(id, err)));
 	}
 
 	@Override
@@ -227,7 +223,7 @@ public final class McpServer implements McpRequestHandler {
 		Mono<JSONRPCResponse> response = handler.handle(ctx, rawParams)
 			.map(result -> mapResultToResponse(ctx, result))
 			.onErrorResume(err -> Mono.just(errorResponse(ctx.requestId(), err)));
-		return McpInvocation.unary(response);
+		return McpInvocation.single(response);
 	}
 
 	private Flux<JSONRPCMessage> buildStreamingFlux(McpRequestContext ctx, McpHandler.Streaming handler,
@@ -329,20 +325,20 @@ public final class McpServer implements McpRequestHandler {
 		return JSONRPCResponse.error(id, new JSONRPCError(ErrorCodes.INTERNAL_ERROR, message));
 	}
 
-	private Mono<McpInvocation> unaryError(Object id, int code, String message) {
-		return unaryError(id, code, message, null);
+	private Mono<McpInvocation> singleError(Object id, int code, String message) {
+		return singleError(id, code, message, null);
 	}
 
-	private Mono<McpInvocation> unaryError(Object id, int code, String message, Object data) {
-		return Mono.just(unaryErrorInvocation(id, code, message, data));
+	private Mono<McpInvocation> singleError(Object id, int code, String message, Object data) {
+		return Mono.just(singleErrorInvocation(id, code, message, data));
 	}
 
-	private McpInvocation unaryErrorInvocation(Object id, int code, String message, Object data) {
-		return McpInvocation.unary(Mono.just(JSONRPCResponse.error(id, new JSONRPCError(code, message, data))));
+	private McpInvocation singleErrorInvocation(Object id, int code, String message, Object data) {
+		return McpInvocation.single(Mono.just(JSONRPCResponse.error(id, new JSONRPCError(code, message, data))));
 	}
 
-	private McpInvocation unaryErrorInvocation(Object id, Throwable throwable) {
-		return McpInvocation.unary(Mono.just(errorResponse(id, throwable)));
+	private McpInvocation singleErrorInvocation(Object id, Throwable throwable) {
+		return McpInvocation.single(Mono.just(errorResponse(id, throwable)));
 	}
 
 	@SuppressWarnings("unchecked")
@@ -377,7 +373,7 @@ public final class McpServer implements McpRequestHandler {
 	}
 
 	/**
-	 * Builds an immutable {@link McpServer} from registered features and filters.
+	 * Builds an immutable {@link McpServer} from registered features.
 	 */
 	public static final class Builder {
 
@@ -390,8 +386,6 @@ public final class McpServer implements McpRequestHandler {
 		private McpJsonMapper jsonMapper;
 
 		private final List<McpFeature> features = new ArrayList<>();
-
-		private final List<McpFilter> filters = new ArrayList<>();
 
 		private long defaultTtlMs = 0L;
 
@@ -496,12 +490,6 @@ public final class McpServer implements McpRequestHandler {
 			return this;
 		}
 
-		public Builder filter(McpFilter filter) {
-			Assert.notNull(filter, "filter must not be null");
-			this.filters.add(filter);
-			return this;
-		}
-
 		/**
 		 * The codec used to seal/open MRTR {@code requestState}. Defaults to
 		 * {@link HmacRequestStateCodec#builder()}{@code .build()}.
@@ -552,34 +540,40 @@ public final class McpServer implements McpRequestHandler {
 			allFeatures.addAll(this.features);
 
 			ServerCapabilities.Builder capabilitiesBuilder = ServerCapabilities.builder();
-			Set<String> inputRequiredMethods = new HashSet<>();
-			McpRouter combined = McpRouter.empty();
 			for (McpFeature feature : allFeatures) {
-				combined = combined.and(feature.router());
 				feature.capabilities(capabilitiesBuilder);
-				inputRequiredMethods.addAll(feature.inputRequiredMethods());
 			}
 
-			// Subscriptions is wired up last: which change types it can honour depends
-			// on the final set of registered primitives.
+			// Subscriptions and discover are wired up last: which change types
+			// subscriptions can honour depends on the registered primitives, and discover
+			// advertises the final capabilities.
 			SubscriptionsFeature subscriptionsFeature = null;
 			if (this.changeFeed != null) {
 				subscriptionsFeature = new SubscriptionsFeature(this.changeFeed, mapper, capabilitiesBuilder.hasTools(),
 						capabilitiesBuilder.hasPrompts(), capabilitiesBuilder.hasResources());
-				combined = combined.and(subscriptionsFeature.router());
 				subscriptionsFeature.capabilities(capabilitiesBuilder);
+				allFeatures.add(subscriptionsFeature);
 			}
+			allFeatures.add(new DiscoverFeature(this.supportedVersions, capabilitiesBuilder.build(), this.instructions,
+					this.defaultTtlMs, this.defaultCacheScope));
 
-			ServerCapabilities capabilities = capabilitiesBuilder.build();
-
-			DiscoverFeature discoverFeature = new DiscoverFeature(this.supportedVersions, capabilities,
-					this.instructions, this.defaultTtlMs, this.defaultCacheScope);
-			combined = discoverFeature.router().and(combined);
+			Map<String, McpFeature> routes = new HashMap<>();
+			Set<String> inputRequiredMethods = new HashSet<>();
+			for (McpFeature feature : allFeatures) {
+				for (String method : feature.methods()) {
+					McpFeature existing = routes.putIfAbsent(method, feature);
+					if (existing != null) {
+						throw new IllegalStateException("Method '" + method + "' is served by both "
+								+ existing.getClass().getName() + " and " + feature.getClass().getName());
+					}
+				}
+				inputRequiredMethods.addAll(feature.inputRequiredMethods());
+			}
 
 			RequestStateCodec codec = this.requestStateCodec != null ? this.requestStateCodec
 					: HmacRequestStateCodec.builder().jsonMapper(mapper).build();
 
-			return new McpServer(this.serverInfo, this.supportedVersions, mapper, combined, List.copyOf(this.filters),
+			return new McpServer(this.serverInfo, this.supportedVersions, mapper, Map.copyOf(routes),
 					Set.copyOf(inputRequiredMethods), codec, subscriptionsFeature);
 		}
 

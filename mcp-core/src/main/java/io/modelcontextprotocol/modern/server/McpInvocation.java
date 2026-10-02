@@ -10,8 +10,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * What a transport gets back from {@link McpRequestHandler#resolve}: either a single
- * response ({@link Unary}, answered as {@code application/json}) or a message stream
+ * What a transport gets back from {@link McpRequestManager}: either a single response
+ * ({@link Single}, answered as {@code application/json}) or a message stream
  * ({@link Streaming}, answered as {@code text/event-stream}) whose last element is always
  * the terminal {@link JSONRPCResponse}.
  * <p>
@@ -27,8 +27,8 @@ public abstract class McpInvocation {
 	private McpInvocation() {
 	}
 
-	public static Unary unary(Mono<JSONRPCResponse> response) {
-		return new Unary(response);
+	public static Single single(Mono<JSONRPCResponse> response) {
+		return new Single(response);
 	}
 
 	public static Streaming streaming(Flux<JSONRPCMessage> messages) {
@@ -36,11 +36,11 @@ public abstract class McpInvocation {
 	}
 
 	/** Answer with a single {@code application/json} response. */
-	public static final class Unary extends McpInvocation {
+	public static final class Single extends McpInvocation {
 
 		private final Mono<JSONRPCResponse> response;
 
-		private Unary(Mono<JSONRPCResponse> response) {
+		private Single(Mono<JSONRPCResponse> response) {
 			this.response = response;
 		}
 

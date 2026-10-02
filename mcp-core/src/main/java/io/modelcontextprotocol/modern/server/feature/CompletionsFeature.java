@@ -5,6 +5,7 @@
 package io.modelcontextprotocol.modern.server.feature;
 
 import java.util.Map;
+import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpError;
@@ -14,7 +15,7 @@ import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpRouter;
+import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -41,25 +42,25 @@ public final class CompletionsFeature implements McpFeature {
 
 	public static CompletionsFeature ofSync(McpSyncCompletionRepository repository, McpJsonMapper jsonMapper) {
 		Assert.notNull(repository, "repository must not be null");
-		return of((ctx, request) -> SyncAdapters.unary(ctx, () -> repository.complete(ctx, request)), jsonMapper);
+		return of((ctx, request) -> SyncAdapters.toAsync(ctx, () -> repository.complete(ctx, request)), jsonMapper);
 	}
 
 	@Override
-	public McpRouter router() {
-		return ctx -> {
-			if (!McpSchema.METHOD_COMPLETION_COMPLETE.equals(ctx.method())) {
-				return Mono.empty();
+	public Set<String> methods() {
+		return Set.of(McpSchema.METHOD_COMPLETION_COMPLETE);
+	}
+
+	@Override
+	public Mono<McpHandler> resolve(McpRequestContext ctx) {
+		McpHandler handler = (c, params) -> {
+			if (!(params instanceof Map<?, ?> map) || map.get("ref") == null) {
+				return Mono
+					.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.ref is required").build());
 			}
-			McpHandler handler = (c, params) -> {
-				if (!(params instanceof Map<?, ?> map) || map.get("ref") == null) {
-					return Mono
-						.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.ref is required").build());
-				}
-				CompleteRequest request = this.jsonMapper.convertValue(params, CompleteRequest.class);
-				return this.repository.complete(c, request).map(result -> result);
-			};
-			return Mono.just(handler);
+			CompleteRequest request = this.jsonMapper.convertValue(params, CompleteRequest.class);
+			return this.repository.complete(c, request).map(result -> result);
 		};
+		return Mono.just(handler);
 	}
 
 	@Override

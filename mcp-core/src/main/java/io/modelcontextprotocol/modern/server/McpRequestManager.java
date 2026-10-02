@@ -11,8 +11,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * The transport-facing entry point. Transports depend only on this interface, never on
- * {@link McpServer} directly, so a caller can substitute a bare router-backed
- * implementation if the composition root is unwanted.
+ * {@link McpServer} directly, so a caller can substitute its own implementation if the
+ * composition root is unwanted.
  * <p>
  * A transport resolves each request through the entry point matching how it will consume
  * the result. That choice, not the programming model of the handlers, decides where sync
@@ -32,7 +32,7 @@ import reactor.core.publisher.Mono;
  *
  * @author Dariusz Jędrzejczyk
  */
-public interface McpRequestHandler {
+public interface McpRequestManager {
 
 	/**
 	 * Resolve the request for a caller that blocks its thread until the returned

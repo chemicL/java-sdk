@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
+import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 
 /**
@@ -18,6 +20,6 @@ public interface McpSyncPromptRepository {
 	/**
 	 * @return the handler for {@code name}, or {@code null} if it doesn't exist
 	 */
-	SyncPromptHandler resolve(McpRequestContext ctx, String name);
+	SyncFeatureHandler<GetPromptRequest, GetPromptResult> resolve(McpRequestContext ctx, String name);
 
 }

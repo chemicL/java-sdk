@@ -133,7 +133,7 @@ public final class McpRequestContext {
 
 	/**
 	 * Whether the transport resolved this request through
-	 * {@link McpRequestHandler#resolveBlocking}: the calling thread waits for the request
+	 * {@link McpRequestManager#resolveBlocking}: the calling thread waits for the request
 	 * to complete, so sync code may run on it and see the thread-locals it carries. When
 	 * {@code false}, sync code must be moved off the calling thread. Custom
 	 * {@link McpFeature}s that run sync code make the same decision the built-in ones do.

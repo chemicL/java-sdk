@@ -11,6 +11,7 @@ import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ListToolsResult;
 import io.modelcontextprotocol.modern.McpSchema.PaginatedRequest;
@@ -18,8 +19,7 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
-import io.modelcontextprotocol.modern.server.McpRoundResult;
-import io.modelcontextprotocol.modern.server.McpRouter;
+import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -60,17 +60,13 @@ public final class ToolsFeature implements McpFeature {
 	}
 
 	@Override
-	public McpRouter router() {
-		return ctx -> {
-			switch (ctx.method()) {
-				case McpSchema.METHOD_TOOLS_LIST:
-					return Mono.just(listHandler());
-				case McpSchema.METHOD_TOOLS_CALL:
-					return callHandler(ctx);
-				default:
-					return Mono.empty();
-			}
-		};
+	public Set<String> methods() {
+		return Set.of(McpSchema.METHOD_TOOLS_LIST, McpSchema.METHOD_TOOLS_CALL);
+	}
+
+	@Override
+	public Mono<McpHandler> resolve(McpRequestContext ctx) {
+		return McpSchema.METHOD_TOOLS_LIST.equals(ctx.method()) ? Mono.just(listHandler()) : callHandler(ctx);
 	}
 
 	@Override
@@ -91,28 +87,15 @@ public final class ToolsFeature implements McpFeature {
 		};
 	}
 
-	private Mono<McpHandler> callHandler(io.modelcontextprotocol.modern.server.McpRequestContext ctx) {
+	private Mono<McpHandler> callHandler(McpRequestContext ctx) {
 		String name = ctx.primitiveName();
 		if (name == null || name.isBlank()) {
 			throw McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.name is required").build();
 		}
 		return this.repository.resolve(ctx, name)
-			.<McpHandler>map(this::wrap)
+			.map(handler -> FeatureHandlers.toMcpHandler(handler, CallToolRequest.class, this.jsonMapper))
 			.switchIfEmpty(
 					Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("Unknown tool: " + name).build()));
-	}
-
-	private McpHandler wrap(AsyncToolHandler handler) {
-		if (handler instanceof AsyncToolHandler.Streaming streaming) {
-			return (McpHandler.Streaming) (ctx, params, notifier) -> {
-				CallToolRequest request = this.jsonMapper.convertValue(params, CallToolRequest.class);
-				return streaming.call(ctx, request, notifier).map(McpRoundResult::result);
-			};
-		}
-		return (ctx, params) -> {
-			CallToolRequest request = this.jsonMapper.convertValue(params, CallToolRequest.class);
-			return handler.call(ctx, request).map(McpRoundResult::result);
-		};
 	}
 
 	private Result toListResult(ToolsPage page) {
@@ -126,25 +109,16 @@ public final class ToolsFeature implements McpFeature {
 	private static McpAsyncToolRepository adapt(McpSyncToolRepository repository) {
 		return new McpAsyncToolRepository() {
 			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
-				return SyncAdapters.unary(ctx, () -> repository.list(ctx, cursor));
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return SyncAdapters.toAsync(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
-			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
 					String name) {
-				return SyncAdapters.unary(ctx, () -> repository.resolve(ctx, name))
-					.flatMap(handler -> handler == null ? Mono.empty() : Mono.just(adapt(handler)));
+				return SyncAdapters.toAsync(ctx, () -> repository.resolve(ctx, name)).map(SyncAdapters::toAsync);
 			}
 		};
-	}
-
-	private static AsyncToolHandler adapt(SyncToolHandler handler) {
-		if (handler instanceof SyncToolHandler.Streaming streaming) {
-			return (AsyncToolHandler.Streaming) (ctx, request, notifier) -> SyncAdapters.streaming(ctx, notifier,
-					syncNotifier -> streaming.call(ctx, request, syncNotifier));
-		}
-		return AsyncToolHandler.withInput((ctx, request) -> SyncAdapters.unary(ctx, () -> handler.call(ctx, request)));
 	}
 
 }

@@ -24,7 +24,7 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpInvocation;
-import io.modelcontextprotocol.modern.server.McpRequestHandler;
+import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
 import io.modelcontextprotocol.util.Assert;
 import jakarta.servlet.AsyncContext;
@@ -41,20 +41,20 @@ import reactor.core.Disposable;
 
 /**
  * A {@link jakarta.servlet.http.HttpServlet}-based transport for a modern
- * {@link McpRequestHandler}. There is no session, no {@code GET} stream and no
+ * {@link McpRequestManager}. There is no session, no {@code GET} stream and no
  * {@code Mcp-Session-Id}: every POST is a self-contained request or notification.
  * <p>
  * Every request except {@code subscriptions/listen} is served start to finish by the
  * container thread that ran the filter chain: it is resolved with
- * {@link McpRequestHandler#resolveBlocking} and the transport blocks on the result. Sync
+ * {@link McpRequestManager#resolveBlocking} and the transport blocks on the result. Sync
  * repositories and handlers therefore run on that thread and see every thread-local a
  * servlet filter populated (Spring Security's {@code SecurityContextHolder}, MDC, ...). A
- * {@code Unary} invocation is answered as {@code application/json}; a {@code Streaming}
+ * {@code Single} invocation is answered as {@code application/json}; a {@code Streaming}
  * one as {@code text/event-stream}, with each notification written and flushed before the
  * handler's notifier call returns.
  * <p>
  * {@code subscriptions/listen} is the exception: it runs no sync user code and can stay
- * open for hours, so it is resolved with {@link McpRequestHandler#resolveNonBlocking} and
+ * open for hours, so it is resolved with {@link McpRequestManager#resolveNonBlocking} and
  * served over {@link AsyncContext}, releasing the container thread.
  *
  * @author Dariusz Jędrzejczyk
@@ -72,7 +72,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private static final String TEXT_EVENT_STREAM = "text/event-stream";
 
-	private final McpRequestHandler requestHandler;
+	private final McpRequestManager requestManager;
 
 	private final McpJsonMapper jsonMapper;
 
@@ -84,17 +84,17 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private volatile boolean closing = false;
 
-	private HttpServletMcpTransport(McpRequestHandler requestHandler, McpJsonMapper jsonMapper, String mcpEndpoint,
+	private HttpServletMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, String mcpEndpoint,
 			McpTransportContextExtractor<HttpServletRequest> contextExtractor, int requestMaxSize) {
-		this.requestHandler = requestHandler;
+		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.mcpEndpoint = mcpEndpoint;
 		this.contextExtractor = contextExtractor;
 		this.requestMaxSize = requestMaxSize;
 	}
 
-	public static Builder builder(McpRequestHandler requestHandler) {
-		return new Builder(requestHandler);
+	public static Builder builder(McpRequestManager requestManager) {
+		return new Builder(requestManager);
 	}
 
 	/**
@@ -103,7 +103,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 	 */
 	public void closeGracefully() {
 		this.closing = true;
-		if (this.requestHandler instanceof io.modelcontextprotocol.modern.server.McpServer server) {
+		if (this.requestManager instanceof io.modelcontextprotocol.modern.server.McpServer server) {
 			server.closeGracefully();
 		}
 	}
@@ -174,7 +174,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 
 		if (message instanceof JSONRPCNotification notification) {
-			this.requestHandler.handleNotification(transportContext, notification).block();
+			this.requestManager.handleNotification(transportContext, notification).block();
 			response.setStatus(HttpServletResponse.SC_ACCEPTED);
 			return;
 		}
@@ -194,8 +194,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		boolean listen = io.modelcontextprotocol.modern.McpSchema.METHOD_SUBSCRIPTIONS_LISTEN
 			.equals(jsonRpcRequest.method());
-		McpInvocation invocation = (listen ? this.requestHandler.resolveNonBlocking(transportContext, jsonRpcRequest)
-				: this.requestHandler.resolveBlocking(transportContext, jsonRpcRequest))
+		McpInvocation invocation = (listen ? this.requestManager.resolveNonBlocking(transportContext, jsonRpcRequest)
+				: this.requestManager.resolveBlocking(transportContext, jsonRpcRequest))
 			.block();
 
 		if (invocation instanceof McpInvocation.Streaming streaming) {
@@ -208,8 +208,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return;
 		}
 
-		JSONRPCResponse jsonRpcResponse = ((McpInvocation.Unary) invocation).response().block();
-		writeUnaryResponse(response, jsonRpcResponse);
+		JSONRPCResponse jsonRpcResponse = ((McpInvocation.Single) invocation).response().block();
+		writeSingleResponse(response, jsonRpcResponse);
 	}
 
 	/**
@@ -294,7 +294,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 	}
 
-	private void writeUnaryResponse(HttpServletResponse response, JSONRPCResponse jsonRpcResponse) throws IOException {
+	private void writeSingleResponse(HttpServletResponse response, JSONRPCResponse jsonRpcResponse) throws IOException {
 		int status = jsonRpcResponse.error() != null ? httpStatusFor(jsonRpcResponse.error().code())
 				: HttpServletResponse.SC_OK;
 		response.setContentType(APPLICATION_JSON);
@@ -327,7 +327,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private void writeJsonRpcErrorResponse(HttpServletResponse response, Object id, JSONRPCError error)
 			throws IOException {
-		writeUnaryResponse(response, JSONRPCResponse.error(id, error));
+		writeSingleResponse(response, JSONRPCResponse.error(id, error));
 	}
 
 	/**
@@ -413,7 +413,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	public static final class Builder {
 
-		private final McpRequestHandler requestHandler;
+		private final McpRequestManager requestManager;
 
 		private McpJsonMapper jsonMapper;
 
@@ -423,9 +423,9 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		private int requestMaxSize = DEFAULT_REQUEST_MAX_SIZE;
 
-		private Builder(McpRequestHandler requestHandler) {
-			Assert.notNull(requestHandler, "requestHandler must not be null");
-			this.requestHandler = requestHandler;
+		private Builder(McpRequestManager requestManager) {
+			Assert.notNull(requestManager, "requestManager must not be null");
+			this.requestManager = requestManager;
 		}
 
 		public Builder jsonMapper(McpJsonMapper jsonMapper) {
@@ -459,7 +459,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		public HttpServletMcpTransport build() {
 			McpJsonMapper mapper = this.jsonMapper != null ? this.jsonMapper : McpJsonDefaults.getMapper();
-			return new HttpServletMcpTransport(this.requestHandler, mapper, this.mcpEndpoint, this.contextExtractor,
+			return new HttpServletMcpTransport(this.requestManager, mapper, this.mcpEndpoint, this.contextExtractor,
 					this.requestMaxSize);
 		}
 

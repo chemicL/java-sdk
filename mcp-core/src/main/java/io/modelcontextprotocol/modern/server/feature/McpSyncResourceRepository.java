@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 
 /**
@@ -22,6 +24,6 @@ public interface McpSyncResourceRepository {
 	/**
 	 * @return the handler for {@code uri}, or {@code null} if it doesn't exist
 	 */
-	SyncResourceHandler resolve(McpRequestContext ctx, String uri);
+	SyncFeatureHandler<ReadResourceRequest, ReadResourceResult> resolve(McpRequestContext ctx, String uri);
 
 }

@@ -7,6 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.concurrent.Callable;
 
 import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
+import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.server.McpAsyncNotifier;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpSyncNotifier;
@@ -14,9 +15,11 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * Bridges sync repositories and handlers onto Reactor. Where the sync code runs is
- * decided per request by {@link McpRequestContext#isBlocking()}: on the calling thread
- * for a blocking caller, on {@code boundedElastic} otherwise.
+ * Converts sync (blocking) repository calls and handlers to their async (Reactor)
+ * equivalents. Only the programming paradigm changes: a single handler stays single and a
+ * streaming handler stays streaming. Where the sync code runs is decided per request by
+ * {@link McpRequestContext#isBlocking()}: on the calling thread for a blocking caller, on
+ * {@code boundedElastic} otherwise.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -25,24 +28,25 @@ final class SyncAdapters {
 	private SyncAdapters() {
 	}
 
-	static <T> Mono<T> unary(McpRequestContext ctx, Callable<T> call) {
+	/**
+	 * Runs one blocking call as a {@link Mono}; a {@code null} result completes empty.
+	 */
+	static <T> Mono<T> toAsync(McpRequestContext ctx, Callable<T> call) {
 		return onCallerOrOffload(ctx, Mono.fromCallable(call));
 	}
 
-	static <RES> Mono<RES> streaming(McpRequestContext ctx, McpAsyncNotifier asyncNotifier, SyncCall<RES> call) {
-		McpSyncNotifier syncNotifier = new BlockingSyncNotifier(asyncNotifier);
-		return onCallerOrOffload(ctx, Mono.fromCallable(() -> call.call(syncNotifier)));
+	static <REQ, RES extends Result> AsyncFeatureHandler<REQ, RES> toAsync(SyncFeatureHandler<REQ, RES> handler) {
+		if (handler instanceof SyncFeatureHandler.Streaming<REQ, RES> streaming) {
+			return (AsyncFeatureHandler.Streaming<REQ, RES>) (ctx, request, notifier) -> {
+				McpSyncNotifier syncNotifier = new BlockingSyncNotifier(notifier);
+				return toAsync(ctx, () -> streaming.handle(ctx, request, syncNotifier));
+			};
+		}
+		return (AsyncFeatureHandler<REQ, RES>) (ctx, request) -> toAsync(ctx, () -> handler.handle(ctx, request));
 	}
 
 	private static <T> Mono<T> onCallerOrOffload(McpRequestContext ctx, Mono<T> mono) {
 		return ctx.isBlocking() ? mono : mono.subscribeOn(Schedulers.boundedElastic());
-	}
-
-	@FunctionalInterface
-	interface SyncCall<RES> {
-
-		RES call(McpSyncNotifier notifier);
-
 	}
 
 	/**
