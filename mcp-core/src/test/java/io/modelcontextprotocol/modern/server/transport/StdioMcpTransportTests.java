@@ -11,25 +11,31 @@ import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
-import io.modelcontextprotocol.modern.McpSchema;
-import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
@@ -66,7 +72,7 @@ class StdioMcpTransportTests {
 	}
 
 	private void send(String method, Object id, Map<String, Object> params) throws IOException {
-		Map<String, Object> body = new java.util.HashMap<>();
+		Map<String, Object> body = new HashMap<>();
 		body.put("jsonrpc", "2.0");
 		body.put("method", method);
 		if (id != null) {
@@ -78,7 +84,7 @@ class StdioMcpTransportTests {
 	}
 
 	private static McpRequestManager managerOf(
-			java.util.function.BiFunction<McpTransportContext, JSONRPCRequest, Mono<McpInvocation>> resolveFn) {
+			BiFunction<McpTransportContext, JSONRPCRequest, Mono<McpInvocation>> resolveFn) {
 		return new McpRequestManager() {
 			@Override
 			public Mono<McpInvocation> resolveBlocking(McpTransportContext transportContext, JSONRPCRequest request) {
@@ -99,16 +105,6 @@ class StdioMcpTransportTests {
 		};
 	}
 
-	private static Map<String, Object> meta(Object... extra) {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
-		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
-		for (int i = 0; i < extra.length; i += 2) {
-			meta.put((String) extra[i], extra[i + 1]);
-		}
-		return meta;
-	}
-
 	@Test
 	void fastRequestIsNotBlockedByASlowerConcurrentOne() throws Exception {
 		CountDownLatch slowStarted = new CountDownLatch(1);
@@ -121,22 +117,20 @@ class StdioMcpTransportTests {
 					slowStarted.countDown();
 					releaseSlow.await(5, TimeUnit.SECONDS);
 				}
-				return JSONRPCResponse.result(request.id(),
-						Map.of("resultType", "complete", "content", java.util.List.of()));
+				return JSONRPCResponse.result(request.id(), Map.of("resultType", "complete", "content", List.of()));
 			});
-			return Mono
-				.just(McpInvocation.single(response.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())));
+			return Mono.just(McpInvocation.single(response.subscribeOn(Schedulers.boundedElastic())));
 		});
 
 		start(manager);
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "slow");
 		send("tools/call", 1, params);
 		assertThat(slowStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
-		Map<String, Object> fastParams = new java.util.HashMap<>();
+		Map<String, Object> fastParams = new HashMap<>();
 		fastParams.put("_meta", meta());
 		fastParams.put("name", "fast");
 		send("tools/call", 2, fastParams);
@@ -154,12 +148,12 @@ class StdioMcpTransportTests {
 	@Test
 	void streamingRequestWritesNotificationsBeforeResponse() throws Exception {
 		McpRequestManager manager = managerOf((transportContext,
-				request) -> Mono.just(McpInvocation.streaming(reactor.core.publisher.Flux.just(
+				request) -> Mono.just(McpInvocation.streaming(Flux.just(
 						(JSONRPCMessage) new JSONRPCNotification("notifications/progress", Map.of("progress", 1.0)),
 						JSONRPCResponse.result(request.id(), Map.of("resultType", "complete"))))));
 
 		start(manager);
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "streamer");
 		send("tools/call", 5, params);
@@ -179,7 +173,7 @@ class StdioMcpTransportTests {
 		});
 		start(manager);
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "hangs");
 		send("tools/call", 9, params);
@@ -225,15 +219,14 @@ class StdioMcpTransportTests {
 		// BufferedReader#readLine blocks until data or EOF; run it on a separate
 		// thread so a design bug (no output ever written) fails with a timeout
 		// instead of hanging the test forever.
-		java.util.concurrent.CompletableFuture<String> future = java.util.concurrent.CompletableFuture
-			.supplyAsync(() -> {
-				try {
-					return this.serverResponses.readLine();
-				}
-				catch (IOException e) {
-					throw new java.util.concurrent.CompletionException(e);
-				}
-			});
+		CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+			try {
+				return this.serverResponses.readLine();
+			}
+			catch (IOException e) {
+				throw new CompletionException(e);
+			}
+		});
 		try {
 			return future.get(5, TimeUnit.SECONDS);
 		}

@@ -9,11 +9,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
@@ -21,16 +24,17 @@ import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
+import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.startup.Tomcat;
-import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -46,7 +50,7 @@ class HttpServletMcpTransportIntegrationTests {
 
 	private static Tomcat tomcat;
 
-	private static final McpJsonMapper JSON_MAPPER = io.modelcontextprotocol.json.McpJsonDefaults.getMapper();
+	private static final McpJsonMapper JSON_MAPPER = McpJsonDefaults.getMapper();
 
 	private static final Tool ECHO_TOOL = Tool.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA).build();
 
@@ -54,13 +58,13 @@ class HttpServletMcpTransportIntegrationTests {
 	static void startServer() {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
 			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
 				return Mono.just(ToolsPage.of(List.of(ECHO_TOOL)));
 			}
 
 			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
-					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
 				if ("echo".equals(name)) {
 					return Mono.just(AsyncFeatureHandler.of((c,
 							req) -> Mono.just(CallToolResult.builder()
@@ -110,7 +114,7 @@ class HttpServletMcpTransportIntegrationTests {
 	}
 
 	private static HttpRequest.Builder post(String method, Map<String, Object> params) throws IOException {
-		Map<String, Object> body = new java.util.HashMap<>();
+		Map<String, Object> body = new HashMap<>();
 		body.put("jsonrpc", "2.0");
 		body.put("id", 1);
 		body.put("method", method);
@@ -121,13 +125,13 @@ class HttpServletMcpTransportIntegrationTests {
 			.header("Content-Type", "application/json")
 			.header("Accept", "application/json, text/event-stream")
 			.header("Mcp-Method", method)
-			.header("MCP-Protocol-Version", io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION)
+			.header("MCP-Protocol-Version", McpSchema.LATEST_PROTOCOL_VERSION)
 			.POST(HttpRequest.BodyPublishers.ofString(json));
 	}
 
 	private static Map<String, Object> meta() {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
+		Map<String, Object> meta = new HashMap<>();
+		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
 		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
 		return meta;
 	}
@@ -144,13 +148,12 @@ class HttpServletMcpTransportIntegrationTests {
 		});
 		@SuppressWarnings("unchecked")
 		Map<String, Object> result = (Map<String, Object>) parsed.get("result");
-		assertThat(result.get("supportedVersions"))
-			.isEqualTo(List.of(io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION));
+		assertThat(result.get("supportedVersions")).isEqualTo(List.of(McpSchema.LATEST_PROTOCOL_VERSION));
 	}
 
 	@Test
 	void singleToolCallReturnsJson() throws Exception {
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "echo");
 		HttpRequest request = post("tools/call", params).header("Mcp-Name", "echo").build();
@@ -165,7 +168,7 @@ class HttpServletMcpTransportIntegrationTests {
 	void streamingToolCallReturnsSse() throws Exception {
 		Map<String, Object> meta = meta();
 		meta.put(MetaKeys.PROGRESS_TOKEN, "tok-1");
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta);
 		params.put("name", "streamer");
 		HttpRequest request = post("tools/call", params).header("Mcp-Name", "streamer").build();
@@ -190,7 +193,7 @@ class HttpServletMcpTransportIntegrationTests {
 
 	@Test
 	void headerMismatchIsRejected() throws Exception {
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("name", "echo");
 		HttpRequest request = post("tools/call", params).setHeader("Mcp-Method", "tools/list").build();

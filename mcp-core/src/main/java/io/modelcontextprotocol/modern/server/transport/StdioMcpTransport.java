@@ -34,15 +34,9 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * A newline-delimited stdio transport for a modern {@link McpRequestManager}. There is no
- * session and no framing beyond one JSON-RPC message per line.
- * <p>
- * A single dedicated thread reads stdin and dispatches; it never blocks on a request's
- * own completion, so a slow request cannot delay a faster concurrent one, and a
- * {@code notifications/cancelled} for one request is always readable while others are in
- * flight: requests are resolved with {@link McpRequestManager#resolveNonBlocking}, so
- * sync repositories and handlers never run on the reader thread. Writes are serialized
- * through one sink onto one dedicated writer thread.
+ * A newline-delimited stdio transport for a modern {@link McpRequestManager}: one
+ * JSON-RPC message per line, no session. Requests are resolved non-blocking, so a slow
+ * request does not delay others.
  *
  * @author Dariusz Jędrzejczyk
  */

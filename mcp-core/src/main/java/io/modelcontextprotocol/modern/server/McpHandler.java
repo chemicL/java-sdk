@@ -8,18 +8,9 @@ import io.modelcontextprotocol.modern.McpSchema.Result;
 import reactor.core.publisher.Mono;
 
 /**
- * The generic handler a {@link McpFeature} resolves to. Application code never implements
- * this directly; it implements the typed {@code AsyncFeatureHandler} or
- * {@code SyncFeatureHandler} that features adapt to this shape.
- * <p>
- * A handler is either single (answered with one response) or {@link Streaming} (may push
- * notifications before its response). This is independent of sync vs async, which is only
- * the programming paradigm the application code is written in.
- * <p>
- * {@link Streaming} is a distinct sub-interface, checked with {@code instanceof} at
- * dispatch time, rather than a flag - so the transport knows whether to answer with
- * {@code application/json} or {@code text/event-stream} as soon as the handler is
- * resolved, before it runs.
+ * The generic handler a {@link McpFeature} resolves to. It is either single (one
+ * response) or {@link Streaming} (may push notifications before its response).
+ * Application code implements the typed feature handlers instead.
  *
  * @author Dariusz Jędrzejczyk
  */

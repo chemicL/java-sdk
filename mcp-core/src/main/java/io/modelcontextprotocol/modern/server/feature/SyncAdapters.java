@@ -28,9 +28,6 @@ final class SyncAdapters {
 	private SyncAdapters() {
 	}
 
-	/**
-	 * Runs one blocking call as a {@link Mono}; a {@code null} result completes empty.
-	 */
 	static <T> Mono<T> toAsync(McpRequestContext ctx, Callable<T> call) {
 		return onCallerOrOffload(ctx, Mono.fromCallable(call));
 	}
@@ -49,11 +46,8 @@ final class SyncAdapters {
 		return ctx.isBlocking() ? mono : mono.subscribeOn(Schedulers.boundedElastic());
 	}
 
-	/**
-	 * Blocks on the async notifier's Monos, which complete synchronously once the
-	 * notification is handed to the stream. Only ever invoked from sync handler code,
-	 * which by construction runs on a thread allowed to block.
-	 */
+	// The async notifier's Monos complete as soon as the notification is handed to the
+	// stream, so blocking on them from sync handler code is cheap.
 	private static final class BlockingSyncNotifier implements McpSyncNotifier {
 
 		private final McpAsyncNotifier delegate;

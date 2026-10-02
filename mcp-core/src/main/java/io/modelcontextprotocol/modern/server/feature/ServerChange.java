@@ -6,8 +6,7 @@ package io.modelcontextprotocol.modern.server.feature;
 
 /**
  * A change a {@link McpChangeFeed} may emit for {@code subscriptions/listen} to forward.
- * Not sealed: an extension may emit its own change types, which
- * {@code subscriptions/listen} simply won't recognize and won't forward.
+ * Types it does not recognize are not forwarded.
  *
  * @author Dariusz Jędrzejczyk
  */

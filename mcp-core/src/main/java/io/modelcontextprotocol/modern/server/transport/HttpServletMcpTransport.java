@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -24,10 +25,12 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpError;
-import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
+import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
 import io.modelcontextprotocol.server.transport.HeaderAccessor;
 import io.modelcontextprotocol.server.transport.ServerHttpHeaderValidator;
@@ -46,22 +49,11 @@ import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
 
 /**
- * A {@link jakarta.servlet.http.HttpServlet}-based transport for a modern
- * {@link McpRequestManager}. There is no session, no {@code GET} stream and no
- * {@code Mcp-Session-Id}: every POST is a self-contained request or notification.
- * <p>
- * Every request except {@code subscriptions/listen} is served start to finish by the
- * container thread that ran the filter chain: it is resolved with
- * {@link McpRequestManager#resolveBlocking} and the transport blocks on the result. Sync
- * repositories and handlers therefore run on that thread and see every thread-local a
- * servlet filter populated (Spring Security's {@code SecurityContextHolder}, MDC, ...). A
- * {@code Single} invocation is answered as {@code application/json}; a {@code Streaming}
- * one as {@code text/event-stream}, with each notification written and flushed before the
- * handler's notifier call returns.
- * <p>
- * {@code subscriptions/listen} is the exception: it runs no sync user code and can stay
- * open for hours, so it is resolved with {@link McpRequestManager#resolveNonBlocking} and
- * served over {@link AsyncContext}, releasing the container thread.
+ * A {@link HttpServlet} transport for a modern
+ * {@link McpRequestManager}: stateless, POST only, one self-contained request or
+ * notification per call. Requests are blocking and served on the container thread, so
+ * thread-locals set by servlet filters are visible to sync handlers;
+ * {@code subscriptions/listen} is served asynchronously.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -113,7 +105,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 	 */
 	public void closeGracefully() {
 		this.closing = true;
-		if (this.requestManager instanceof io.modelcontextprotocol.modern.server.McpServer server) {
+		if (this.requestManager instanceof McpServer server) {
 			server.closeGracefully();
 		}
 	}
@@ -142,7 +134,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return;
 		}
 		// Modern servers never mint sessions or resumable streams; a legacy GET/DELETE
-		// gets a plain 405, per the four cheap obligations toward legacy traffic.
+		// gets a plain 405, without a session or stream.
 		response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
 	}
 
@@ -209,8 +201,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return;
 		}
 
-		boolean listen = io.modelcontextprotocol.modern.McpSchema.METHOD_SUBSCRIPTIONS_LISTEN
-			.equals(jsonRpcRequest.method());
+		boolean listen = McpSchema.METHOD_SUBSCRIPTIONS_LISTEN.equals(jsonRpcRequest.method());
 		McpInvocation invocation = (listen ? this.requestManager.resolveNonBlocking(transportContext, jsonRpcRequest)
 				: this.requestManager.resolveBlocking(transportContext, jsonRpcRequest))
 			.block();
@@ -229,16 +220,13 @@ public class HttpServletMcpTransport extends HttpServlet {
 		writeSingleResponse(response, jsonRpcResponse);
 	}
 
-	/**
-	 * Subscribes on, and blocks, the container thread: a sync handler runs inside this
-	 * subscription, and each notification it emits is written by the same thread before
-	 * its notifier call returns. A client disconnect surfaces as a failed write, which
-	 * cancels the stream; blocking handler code cannot be interrupted, so it runs to
-	 * completion and its remaining output is discarded.
-	 */
 	private void streamOnContainerThread(HttpServletResponse response, McpInvocation.Streaming streaming)
 			throws IOException {
 		PrintWriter writer = startEventStream(response);
+		// Blocking on the container thread lets sync handlers run inside this
+		// subscription, each notification written before its notifier call returns. A
+		// client disconnect fails a write and cancels the stream, but blocking handler
+		// code can't be interrupted: it runs to completion, its output discarded.
 		try {
 			streaming.messages().doOnNext(message -> writeEvent(writer, message)).blockLast();
 		}
@@ -291,11 +279,6 @@ public class HttpServletMcpTransport extends HttpServlet {
 		return response.getWriter();
 	}
 
-	/**
-	 * Writes and flushes one SSE event. {@link PrintWriter} swallows I/O errors, so a
-	 * closed client is detected via {@link PrintWriter#checkError()} and rethrown to end
-	 * the stream.
-	 */
 	private void writeEvent(PrintWriter writer, JSONRPCMessage message) {
 		String json;
 		try {
@@ -306,6 +289,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 		writer.write("event: message\ndata: " + json + "\n\n");
 		writer.flush();
+		// PrintWriter swallows I/O errors; checkError is how a closed client shows up.
 		if (writer.checkError()) {
 			throw new UncheckedIOException(new IOException("Client disconnected"));
 		}
@@ -375,10 +359,9 @@ public class HttpServletMcpTransport extends HttpServlet {
 			}
 		}
 
-		boolean nameRequired = io.modelcontextprotocol.modern.McpSchema.METHOD_TOOLS_CALL
-			.equals(jsonRpcRequest.method())
-				|| io.modelcontextprotocol.modern.McpSchema.METHOD_RESOURCES_READ.equals(jsonRpcRequest.method())
-				|| io.modelcontextprotocol.modern.McpSchema.METHOD_PROMPTS_GET.equals(jsonRpcRequest.method());
+		boolean nameRequired = McpSchema.METHOD_TOOLS_CALL.equals(jsonRpcRequest.method())
+				|| McpSchema.METHOD_RESOURCES_READ.equals(jsonRpcRequest.method())
+				|| McpSchema.METHOD_PROMPTS_GET.equals(jsonRpcRequest.method());
 		if (!nameRequired) {
 			return null;
 		}
@@ -434,7 +417,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 	private static String decodeMcpNameHeader(String value) {
 		if (value.startsWith("=?base64?") && value.endsWith("?=")) {
 			String base64 = value.substring("=?base64?".length(), value.length() - "?=".length());
-			return new String(java.util.Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
+			return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
 		}
 		return value;
 	}

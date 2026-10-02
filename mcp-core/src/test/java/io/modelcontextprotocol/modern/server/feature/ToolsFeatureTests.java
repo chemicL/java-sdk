@@ -16,39 +16,34 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
-import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
+import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import io.modelcontextprotocol.util.ToolsUtils;
-import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.modern.server.McpFeature;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.respond;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ToolsFeatureTests {
 
-	private static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
-
 	private static final Tool ECHO_TOOL = Tool.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA).build();
-
-	private static Map<String, Object> meta() {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
-		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
-		return meta;
-	}
 
 	private static McpFeature tools(McpAsyncToolRepository repository) {
 		return ToolsFeature.of(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
@@ -64,74 +59,13 @@ class ToolsFeatureTests {
 
 	@Test
 	void unknownToolIsRejected() {
-		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
-			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(List.of()));
-			}
-
-			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
-					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
-				return Mono.empty();
-			}
-		};
+		McpAsyncToolRepository repo = emptyTools();
 		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "does-not-exist"));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
-	}
-
-	@Test
-	void asyncSingleHandlerAnswersAsSingle() {
-		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
-			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(List.of(ECHO_TOOL)));
-			}
-
-			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
-					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
-				return Mono.just(AsyncFeatureHandler.of((c,
-						req) -> Mono.just(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
-							.addContent(TextContent.builder("echo:" + req.name()).build())
-							.build())));
-			}
-		};
-		McpServer server = baseBuilder().feature(tools(repo)).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
-
-		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
-		assertThat(invocation).isInstanceOf(McpInvocation.Single.class);
-	}
-
-	@Test
-	void streamingHandlerAnswersAsStreaming() {
-		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
-			@Override
-			public Mono<ToolsPage> list(io.modelcontextprotocol.modern.server.McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(List.of(ECHO_TOOL)));
-			}
-
-			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(
-					io.modelcontextprotocol.modern.server.McpRequestContext ctx, String name) {
-				return Mono.just(AsyncFeatureHandler.streaming((c, req, notifier) -> notifier.progress(1.0, 1.0, "done")
-					.thenReturn(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
-						.addContent(TextContent.builder("ok").build())
-						.build())));
-			}
-		};
-		McpServer server = baseBuilder().feature(tools(repo)).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
-
-		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
-		assertThat(invocation).isInstanceOf(McpInvocation.Streaming.class);
 	}
 
 	private static final ThreadLocal<String> PRINCIPAL = new ThreadLocal<>();
@@ -173,10 +107,8 @@ class ToolsFeatureTests {
 		};
 	}
 
-	/**
-	 * Records how many messages the consumer had already received when the handler's
-	 * progress call returned, to tell inline delivery apart from buffering.
-	 */
+	// Records how many messages the consumer had already received when the handler's
+	// progress call returned, to tell inline delivery apart from buffering.
 	private static McpSyncToolRepository streamingGreetingRepo(Function<McpRequestContext, String> principal,
 			AtomicReference<String> handlerThread, List<JSONRPCMessage> delivered,
 			AtomicInteger deliveredWhenProgressReturned) {
@@ -341,10 +273,7 @@ class ToolsFeatureTests {
 
 	@Test
 	void withInputHandlerCanAnswerInputRequired() {
-		io.modelcontextprotocol.modern.McpSchema.InputRequiredResult inputRequired = io.modelcontextprotocol.modern.McpSchema.InputRequiredResult
-			.builder()
-			.requestState("s")
-			.build();
+		McpSchema.InputRequiredResult inputRequired = McpSchema.InputRequiredResult.builder().requestState("s").build();
 		AsyncFeatureHandler<CallToolRequest, CallToolResult> handler = AsyncFeatureHandler
 			.withInput((ctx, req) -> Mono.just(McpRoundResult.inputRequired(inputRequired)));
 

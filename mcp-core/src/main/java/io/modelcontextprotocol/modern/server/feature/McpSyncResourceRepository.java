@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.List;
+
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
@@ -18,7 +20,7 @@ public interface McpSyncResourceRepository {
 	ResourcesPage list(McpRequestContext ctx, String cursor);
 
 	default ResourceTemplatesPage listTemplates(McpRequestContext ctx, String cursor) {
-		return ResourceTemplatesPage.of(java.util.List.of());
+		return ResourceTemplatesPage.of(List.of());
 	}
 
 	/**

@@ -7,12 +7,12 @@ package io.modelcontextprotocol.modern.server;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.function.Function;
-
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -192,7 +192,7 @@ public final class HmacRequestStateCodec implements RequestStateCodec {
 			byte[] effectiveKey = this.key;
 			if (effectiveKey == null) {
 				effectiveKey = new byte[32];
-				new java.security.SecureRandom().nextBytes(effectiveKey);
+				new SecureRandom().nextBytes(effectiveKey);
 				logger.warn("HmacRequestStateCodec: no key configured, generated a random per-process key. "
 						+ "State sealed by this instance cannot be opened by another instance; "
 						+ "configure a shared key for multi-instance deployments.");

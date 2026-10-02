@@ -4,7 +4,7 @@
 
 package io.modelcontextprotocol.modern.server;
 
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -12,50 +12,22 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpSchema;
-import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
-import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
-import io.modelcontextprotocol.modern.McpSchema.Implementation;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
-import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
-import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
-import io.modelcontextprotocol.modern.server.feature.ToolsPage;
-import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
-import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
+import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SubscriptionsFeatureTests {
-
-	private static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
-
-	private static Map<String, Object> meta() {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
-		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
-		return meta;
-	}
-
-	private static McpAsyncToolRepository noopTools() {
-		return new McpAsyncToolRepository() {
-			@Override
-			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(List.of()));
-			}
-
-			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
-					String name) {
-				return Mono.empty();
-			}
-		};
-	}
 
 	@Test
 	void ackIsFirstAndReflectsHonouredSubset() {
@@ -63,11 +35,11 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("notifications", Map.of("toolsListChanged", true, "promptsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 7, params);
@@ -104,11 +76,11 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 1, params);
@@ -134,11 +106,11 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 42, params);

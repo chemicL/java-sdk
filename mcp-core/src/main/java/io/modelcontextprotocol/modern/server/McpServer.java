@@ -46,15 +46,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 /**
- * The composition root for a modern MCP server: a stateless, immutable dispatcher that
- * routes each request by method to the {@link McpFeature} serving it.
- * <p>
- * {@code McpServer} owns exactly what must live in one place: {@code _meta} validation
- * and version negotiation, {@code server/discover}, {@code serverInfo} stamping, error
- * mapping, and (once configured) {@code requestState} sealing for MRTR. Everything else -
- * tool, resource and prompt handling, subscriptions, extensions - is a feature. There is
- * no {@code McpSyncServer} twin: sync and async are properties of repositories and
- * handlers, not of the server.
+ * A stateless, immutable dispatcher that routes each request by method to the
+ * {@link McpFeature} serving it. It validates {@code _meta}, negotiates the version,
+ * answers {@code server/discover}, stamps {@code serverInfo}, maps errors and seals MRTR
+ * {@code requestState}.
  *
  * @author Dariusz Jędrzejczyk
  */

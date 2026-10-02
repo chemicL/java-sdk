@@ -9,12 +9,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * Emits request-scoped notifications from inside a {@link McpHandler.Streaming}.
- * Notifications are relative to the request being served; they are never sent on the
- * {@code subscriptions/listen} stream.
- * <p>
- * {@link #progress} and {@link #log} are no-ops when the request didn't declare a
- * {@code progressToken} / {@code logLevel} respectively - the spec forbids sending either
- * without them, so callers never need to check first.
+ * {@link #progress} and {@link #log} are no-ops when the request declared no
+ * {@code progressToken} / {@code logLevel}.
  *
  * @author Dariusz Jędrzejczyk
  */

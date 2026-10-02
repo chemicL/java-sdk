@@ -4,6 +4,7 @@
 
 package io.modelcontextprotocol.modern.server;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -11,9 +12,9 @@ import java.util.Set;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
-import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.Result;
@@ -24,22 +25,13 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.respond;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McpServerTests {
-
-	private static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
-
-	private static Map<String, Object> metaWith(Object... extra) {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
-		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
-		for (int i = 0; i < extra.length; i += 2) {
-			meta.put((String) extra[i], extra[i + 1]);
-		}
-		return meta;
-	}
 
 	private static McpServer.Builder baseBuilder() {
 		return McpServer.builder().serverInfo(SERVER_INFO).jsonMapper(new GsonMcpJsonMapper());
@@ -69,26 +61,20 @@ class McpServerTests {
 		McpServer server = baseBuilder().build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of());
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
-			.assertNext(response -> {
-				assertThat(response.error()).isNotNull();
-				assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
-			})
-			.verifyComplete();
+		StepVerifier.create(respond(server, request)).assertNext(response -> {
+			assertThat(response.error()).isNotNull();
+			assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
+		}).verifyComplete();
 	}
 
 	@Test
 	void missingClientCapabilitiesIsRejected() {
 		McpServer server = baseBuilder().build();
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
+		Map<String, Object> meta = new HashMap<>();
+		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
 		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}
@@ -97,11 +83,9 @@ class McpServerTests {
 	void unsupportedVersionIsRejected() {
 		McpServer server = baseBuilder().build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1,
-				Map.of("_meta", metaWith(MetaKeys.PROTOCOL_VERSION, "1999-01-01")));
+				Map.of("_meta", meta(MetaKeys.PROTOCOL_VERSION, "1999-01-01")));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(
 					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
 			.verifyComplete();
@@ -110,11 +94,9 @@ class McpServerTests {
 	@Test
 	void unknownMethodIsRejected() {
 		McpServer server = baseBuilder().build();
-		JSONRPCRequest request = new JSONRPCRequest("does/not/exist", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("does/not/exist", 1, Map.of("_meta", meta()));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.METHOD_NOT_FOUND))
 			.verifyComplete();
 	}
@@ -123,11 +105,9 @@ class McpServerTests {
 	void handlerExceptionBecomesInternalError() {
 		McpFeature failing = feature("tools/call", (ctx, params) -> Mono.error(new RuntimeException("boom")));
 		McpServer server = baseBuilder().feature(failing).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
 	}
@@ -135,19 +115,15 @@ class McpServerTests {
 	@Test
 	void serverInfoIsStampedOnEveryResult() {
 		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
-			.assertNext(response -> {
-				@SuppressWarnings("unchecked")
-				Map<String, Object> result = (Map<String, Object>) response.result();
-				@SuppressWarnings("unchecked")
-				Map<String, Object> meta = (Map<String, Object>) result.get("_meta");
-				assertThat(meta).containsKey(MetaKeys.SERVER_INFO);
-			})
-			.verifyComplete();
+		StepVerifier.create(respond(server, request)).assertNext(response -> {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> result = (Map<String, Object>) response.result();
+			@SuppressWarnings("unchecked")
+			Map<String, Object> meta = (Map<String, Object>) result.get("_meta");
+			assertThat(meta).containsKey(MetaKeys.SERVER_INFO);
+		}).verifyComplete();
 	}
 
 	@Test
@@ -169,19 +145,14 @@ class McpServerTests {
 			}
 		};
 		McpServer server = baseBuilder().feature(toolsCapability).build();
-		JSONRPCRequest request = new JSONRPCRequest("server/discover", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("server/discover", 1, Map.of("_meta", meta()));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
-			.assertNext(response -> {
-				@SuppressWarnings("unchecked")
-				Map<String, Object> result = (Map<String, Object>) response.result();
-				assertThat(result.get("supportedVersions"))
-					.isEqualTo(List.of(io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION));
-				assertThat(result.get("capabilities")).isNotNull();
-			})
-			.verifyComplete();
+		StepVerifier.create(respond(server, request)).assertNext(response -> {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> result = (Map<String, Object>) response.result();
+			assertThat(result.get("supportedVersions")).isEqualTo(List.of(McpSchema.LATEST_PROTOCOL_VERSION));
+			assertThat(result.get("capabilities")).isNotNull();
+		}).verifyComplete();
 	}
 
 	@Test
@@ -197,7 +168,7 @@ class McpServerTests {
 		McpFeature feature = feature("tools/call", streaming);
 		McpServer server = baseBuilder().feature(feature).build();
 
-		Map<String, Object> meta = metaWith(MetaKeys.PROGRESS_TOKEN, "tok-1");
+		Map<String, Object> meta = meta(MetaKeys.PROGRESS_TOKEN, "tok-1");
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta));
 
 		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
@@ -220,7 +191,7 @@ class McpServerTests {
 		};
 		McpFeature feature = feature("tools/call", streaming);
 		McpServer server = baseBuilder().feature(feature).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
 
 		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.block();
@@ -234,11 +205,9 @@ class McpServerTests {
 		McpFeature feature = feature("resources/list",
 				(ctx, params) -> Mono.just(InputRequiredResult.builder().requestState("s").build()));
 		McpServer server = baseBuilder().feature(feature).build();
-		JSONRPCRequest request = new JSONRPCRequest("resources/list", 1, Map.of("_meta", metaWith()));
+		JSONRPCRequest request = new JSONRPCRequest("resources/list", 1, Map.of("_meta", meta()));
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
 	}

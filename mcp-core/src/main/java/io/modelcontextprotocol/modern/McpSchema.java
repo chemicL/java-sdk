@@ -149,10 +149,8 @@ public final class McpSchema {
 	// ---------------------------
 
 	/**
-	 * Base type for every modern result. {@code resultType} is spec-required and is
-	 * either {@link ResultType#COMPLETE} or {@link ResultType#INPUT_REQUIRED}; it is
-	 * intentionally an open {@code String} rather than an enum, since future revisions
-	 * may add values.
+	 * Base type for every modern result; {@code resultType} is spec-required (see
+	 * {@link ResultType}).
 	 */
 	public interface Result {
 
@@ -1290,7 +1288,7 @@ public final class McpSchema {
 	}
 
 	// ---------------------------
-	// MRTR (Multi-Round Tool Response) - input-required results and payloads
+	// MRTR (multi round-trip requests) - input-required results and payloads
 	// ---------------------------
 
 	/**
@@ -1350,11 +1348,9 @@ public final class McpSchema {
 	}
 
 	/**
-	 * A modern result signalling that the server needs more input before it can complete
-	 * the original request. Only {@code tools/call}, {@code resources/read} and
-	 * {@code prompts/get} may return this; that restriction is enforced by
-	 * {@code McpServer} at dispatch time, not by the type system, since the set of
-	 * methods that support MRTR is a spec detail that may change.
+	 * A result signalling that the server needs more input before it can complete the
+	 * original request. Only {@code tools/call}, {@code resources/read} and
+	 * {@code prompts/get} may return it.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)

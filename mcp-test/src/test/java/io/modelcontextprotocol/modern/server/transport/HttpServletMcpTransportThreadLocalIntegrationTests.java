@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -16,8 +17,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
@@ -28,6 +31,7 @@ import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.SyncFeatureHandler;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
 import io.modelcontextprotocol.util.ToolsUtils;
@@ -40,7 +44,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.startup.Tomcat;
-import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -60,7 +63,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 
 	private static final String FILTER_THREAD_HEADER = "X-Filter-Thread";
 
-	private static final McpJsonMapper JSON_MAPPER = io.modelcontextprotocol.json.McpJsonDefaults.getMapper();
+	private static final McpJsonMapper JSON_MAPPER = McpJsonDefaults.getMapper();
 
 	/** Stands in for {@code SecurityContextHolder}. */
 	private static final ThreadLocal<String> PRINCIPAL = new ThreadLocal<>();
@@ -75,10 +78,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 
 	private static Tomcat tomcat;
 
-	/**
-	 * Authenticates from a header and clears the thread-local once the chain returns,
-	 * like Spring Security's {@code SecurityContextHolderFilter}.
-	 */
+	/** Authenticates from a header and clears the thread-local once the chain returns. */
 	static final class PrincipalFilter implements Filter {
 
 		@Override
@@ -163,11 +163,11 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 	}
 
 	private static HttpRequest post(String principal, String method, String name) throws IOException {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
+		Map<String, Object> meta = new HashMap<>();
+		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
 		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
 		meta.put(MetaKeys.PROGRESS_TOKEN, "tok-1");
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta);
 		if (name != null) {
 			params.put("name", name);
@@ -178,7 +178,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 			.header("Content-Type", "application/json")
 			.header("Accept", "application/json, text/event-stream")
 			.header("Mcp-Method", method)
-			.header("MCP-Protocol-Version", io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION)
+			.header("MCP-Protocol-Version", McpSchema.LATEST_PROTOCOL_VERSION)
 			.header("X-Principal", principal)
 			.POST(HttpRequest.BodyPublishers.ofString(JSON_MAPPER.writeValueAsString(body)));
 		if (name != null) {

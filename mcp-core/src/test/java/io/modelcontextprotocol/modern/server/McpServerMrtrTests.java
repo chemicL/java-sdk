@@ -4,17 +4,18 @@
 
 package io.modelcontextprotocol.modern.server;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ElicitFormRequest;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
-import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
@@ -24,35 +25,25 @@ import io.modelcontextprotocol.modern.McpSchema.TextResourceContents;
 import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncResourceRepository;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
+import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
-import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
-import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static io.modelcontextprotocol.modern.server.McpRoundResult.*;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.respond;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpServerMrtrTests {
 
-	private static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
-
-	private static Map<String, Object> metaWith(Object... extra) {
-		Map<String, Object> meta = new java.util.HashMap<>();
-		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
-		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
-		for (int i = 0; i < extra.length; i += 2) {
-			meta.put((String) extra[i], extra[i + 1]);
-		}
-		return meta;
-	}
-
 	private static Map<String, Object> metaWithElicitation() {
-		Map<String, Object> meta = metaWith();
+		Map<String, Object> meta = meta();
 		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of("elicitation", Map.of("form", Map.of())));
 		return meta;
 	}
@@ -72,7 +63,7 @@ class McpServerMrtrTests {
 				return Mono.just(AsyncFeatureHandler.withInput((c, req) -> {
 					if (req.requestState() != null) {
 						seenRequestState.set(req.requestState());
-						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult.complete(
+						return Mono.just(McpRoundResult.complete(
 								CallToolResult.builder().addContent(TextContent.builder("resumed").build()).build()));
 					}
 					return Mono.just(inputRequired(InputRequiredResult.builder()
@@ -88,14 +79,12 @@ class McpServerMrtrTests {
 			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
+		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", metaWithElicitation());
 		params.put("name", "echo");
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
 
-		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMap(inv -> ((McpInvocation.Single) inv).response())
-			.block();
+		var response = respond(server, request).block();
 
 		@SuppressWarnings("unchecked")
 		Map<String, Object> result = (Map<String, Object>) response.result();
@@ -103,15 +92,13 @@ class McpServerMrtrTests {
 		assertThat(wireRequestState).isNotNull().isNotEqualTo("secret-plaintext");
 
 		// Retry with the sealed state: the handler must see the plaintext.
-		Map<String, Object> retryParams = new java.util.HashMap<>();
+		Map<String, Object> retryParams = new HashMap<>();
 		retryParams.put("_meta", metaWithElicitation());
 		retryParams.put("name", "echo");
 		retryParams.put("requestState", wireRequestState);
 		JSONRPCRequest retryRequest = new JSONRPCRequest("tools/call", 2, retryParams);
 
-		var retryResponse = server.resolveNonBlocking(McpTransportContext.EMPTY, retryRequest)
-			.flatMap(inv -> ((McpInvocation.Single) inv).response())
-			.block();
+		var retryResponse = respond(server, retryRequest).block();
 
 		assertThat(retryResponse.error()).isNull();
 		assertThat(seenRequestState.get()).isEqualTo("secret-plaintext");
@@ -149,14 +136,12 @@ class McpServerMrtrTests {
 			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
-		params.put("_meta", metaWith());
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
 		params.put("name", "echo");
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
 
-		StepVerifier
-			.create(server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-				.flatMap(inv -> ((McpInvocation.Single) inv).response()))
+		StepVerifier.create(respond(server, request))
 			.assertNext(response -> assertThat(response.error().code())
 				.isEqualTo(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY))
 			.verifyComplete();
@@ -185,15 +170,13 @@ class McpServerMrtrTests {
 			.feature(ResourcesFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
-		Map<String, Object> params = new java.util.HashMap<>();
-		params.put("_meta", metaWith());
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
 		params.put("uri", "file:///a.txt");
 		params.put("inputResponses", Map.of("q1", Map.of("action", "accept")));
 		JSONRPCRequest request = new JSONRPCRequest("resources/read", 1, params);
 
-		var response = server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMap(inv -> ((McpInvocation.Single) inv).response())
-			.block();
+		var response = respond(server, request).block();
 
 		@SuppressWarnings("unchecked")
 		Map<String, Object> result = (Map<String, Object>) response.result();

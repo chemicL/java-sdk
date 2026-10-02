@@ -10,15 +10,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * What a transport gets back from {@link McpRequestManager}: either a single response
- * ({@link Single}, answered as {@code application/json}) or a message stream
- * ({@link Streaming}, answered as {@code text/event-stream}) whose last element is always
- * the terminal {@link JSONRPCResponse}.
- * <p>
- * Deliberately not a {@code sealed} type: the two kinds are known and closed today, but
- * the point of keeping this open is that a transport only needs {@code instanceof} checks
- * against the two public nested classes, not a switch that the compiler pins to an
- * exhaustive set.
+ * What a transport gets back from {@link McpRequestManager}: a {@link Single} response
+ * ({@code application/json}) or a {@link Streaming} message stream
+ * ({@code text/event-stream}) ending with the terminal {@link JSONRPCResponse}.
  *
  * @author Dariusz Jędrzejczyk
  */

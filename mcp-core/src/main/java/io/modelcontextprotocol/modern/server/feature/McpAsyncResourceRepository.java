@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.List;
+
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
@@ -19,7 +21,7 @@ public interface McpAsyncResourceRepository {
 	Mono<ResourcesPage> list(McpRequestContext ctx, String cursor);
 
 	default Mono<ResourceTemplatesPage> listTemplates(McpRequestContext ctx, String cursor) {
-		return Mono.just(ResourceTemplatesPage.of(java.util.List.of()));
+		return Mono.just(ResourceTemplatesPage.of(List.of()));
 	}
 
 	/**

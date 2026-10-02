@@ -10,9 +10,11 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.McpError;
+import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
@@ -24,11 +26,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class HmacRequestStateCodecTests {
 
 	private static McpRequestContext ctx(String method, String primitiveName, McpTransportContext tc) {
-		Map<String, Object> meta = Map.of(MetaKeys.PROTOCOL_VERSION,
-				io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION, MetaKeys.CLIENT_CAPABILITIES,
-				Map.of());
-		return new McpRequestContext(1, method, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION,
-				ClientCapabilities.NONE, null, null, null, primitiveName, meta, tc, false, false);
+		Map<String, Object> meta = Map.of(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION,
+				MetaKeys.CLIENT_CAPABILITIES, Map.of());
+		return new McpRequestContext(1, method, McpSchema.LATEST_PROTOCOL_VERSION, ClientCapabilities.NONE, null, null,
+				null, primitiveName, meta, tc, false, false);
 	}
 
 	private static HmacRequestStateCodec codec(Clock clock) {
@@ -75,8 +76,7 @@ class HmacRequestStateCodecTests {
 	@Test
 	void expiredStateIsRejected() {
 		Instant start = Instant.parse("2026-01-01T00:00:00Z");
-		java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(
-				start);
+		AtomicReference<Instant> now = new AtomicReference<>(start);
 		Clock clock = new Clock() {
 			@Override
 			public ZoneId getZone() {

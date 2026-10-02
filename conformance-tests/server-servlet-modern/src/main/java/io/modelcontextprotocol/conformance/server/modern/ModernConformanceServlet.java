@@ -59,6 +59,7 @@ import io.modelcontextprotocol.modern.server.transport.HttpServletMcpTransport;
 import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import org.apache.catalina.Context;
 import org.apache.catalina.LifecycleException;
+import org.apache.catalina.Wrapper;
 import org.apache.catalina.startup.Tomcat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -170,7 +171,7 @@ public class ModernConformanceServlet {
 		tomcat.setBaseDir(baseDir);
 
 		Context context = tomcat.addContext("", baseDir);
-		org.apache.catalina.Wrapper wrapper = context.createWrapper();
+		Wrapper wrapper = context.createWrapper();
 		wrapper.setName("mcpServlet");
 		wrapper.setServlet(transport);
 		wrapper.setLoadOnStartup(1);

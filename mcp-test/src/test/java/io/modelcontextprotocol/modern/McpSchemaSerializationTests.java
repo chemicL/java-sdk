@@ -64,9 +64,7 @@ import static org.assertj.core.api.Assertions.assertThatException;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 /**
- * Serialization tests for {@code modern.McpSchema}, run against the real Jackson mapper
- * (unlike the mcp-core unit tests, which use a Gson test double since mcp-core has no
- * Jackson dependency in test scope).
+ * Serialization tests for {@code modern.McpSchema}.
  *
  * @author Dariusz Jędrzejczyk
  */
