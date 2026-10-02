@@ -10,6 +10,8 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -22,10 +24,14 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpError;
+import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
+import io.modelcontextprotocol.server.transport.HeaderAccessor;
+import io.modelcontextprotocol.server.transport.ServerHttpHeaderValidator;
+import io.modelcontextprotocol.server.transport.ServerTransportSecurityException;
 import io.modelcontextprotocol.util.Assert;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.AsyncEvent;
@@ -82,15 +88,19 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private final int requestMaxSize;
 
+	private final ServerHttpHeaderValidator httpHeaderValidator;
+
 	private volatile boolean closing = false;
 
 	private HttpServletMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, String mcpEndpoint,
-			McpTransportContextExtractor<HttpServletRequest> contextExtractor, int requestMaxSize) {
+			McpTransportContextExtractor<HttpServletRequest> contextExtractor, int requestMaxSize,
+			ServerHttpHeaderValidator httpHeaderValidator) {
 		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.mcpEndpoint = mcpEndpoint;
 		this.contextExtractor = contextExtractor;
 		this.requestMaxSize = requestMaxSize;
+		this.httpHeaderValidator = httpHeaderValidator;
 	}
 
 	public static Builder builder(McpRequestManager requestManager) {
@@ -145,6 +155,13 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 		if (this.closing) {
 			response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Server is shutting down");
+			return;
+		}
+		try {
+			this.httpHeaderValidator.validate(headerAccessor(request));
+		}
+		catch (ServerTransportSecurityException e) {
+			response.sendError(e.getStatusCode(), e.getMessage());
 			return;
 		}
 		if (request.getContentLengthLong() > this.requestMaxSize) {
@@ -331,10 +348,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 	}
 
 	/**
-	 * Validates {@code Mcp-Method} and, for the three named methods, {@code Mcp-Name}
-	 * against the request body. {@code MCP-Protocol-Version} is left to
-	 * {@code McpServer}'s {@code _meta} validation, since a malformed body may not even
-	 * carry a readable version yet.
+	 * Validates {@code Mcp-Method}, {@code MCP-Protocol-Version} and, for the three named
+	 * methods, {@code Mcp-Name} against the request body.
 	 * @return a human-readable mismatch description, or {@code null} if the headers are
 	 * consistent with the body
 	 */
@@ -345,6 +360,19 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 		if (!methodHeader.equals(jsonRpcRequest.method())) {
 			return "Mcp-Method header does not match request method";
+		}
+
+		// A body without a readable version is left to McpServer's _meta validation,
+		// which answers it with -32602.
+		String bodyVersion = protocolVersionFromMeta(jsonRpcRequest.params());
+		if (bodyVersion != null) {
+			String versionHeader = request.getHeader("MCP-Protocol-Version");
+			if (versionHeader == null) {
+				return "Missing required header: MCP-Protocol-Version";
+			}
+			if (!versionHeader.equals(bodyVersion)) {
+				return "MCP-Protocol-Version header does not match _meta protocol version";
+			}
 		}
 
 		boolean nameRequired = io.modelcontextprotocol.modern.McpSchema.METHOD_TOOLS_CALL
@@ -375,6 +403,28 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return "Mcp-Name header does not match request name/uri";
 		}
 		return null;
+	}
+
+	private static String protocolVersionFromMeta(Object params) {
+		if (params instanceof Map<?, ?> paramsMap && paramsMap.get("_meta") instanceof Map<?, ?> meta
+				&& meta.get(MetaKeys.PROTOCOL_VERSION) instanceof String version) {
+			return version;
+		}
+		return null;
+	}
+
+	private static HeaderAccessor headerAccessor(HttpServletRequest request) {
+		return new HeaderAccessor() {
+			@Override
+			public List<String> getHeader(String name) {
+				return Collections.list(request.getHeaders(name));
+			}
+
+			@Override
+			public List<String> getHeaderNames() {
+				return Collections.list(request.getHeaderNames());
+			}
+		};
 	}
 
 	private static boolean isPlainAscii(String value) {
@@ -423,6 +473,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		private int requestMaxSize = DEFAULT_REQUEST_MAX_SIZE;
 
+		private ServerHttpHeaderValidator httpHeaderValidator = ServerHttpHeaderValidator.NOOP;
+
 		private Builder(McpRequestManager requestManager) {
 			Assert.notNull(requestManager, "requestManager must not be null");
 			this.requestManager = requestManager;
@@ -457,10 +509,21 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return this;
 		}
 
+		/**
+		 * Validates the headers of every POST before it is read, e.g. Host/Origin checks
+		 * against DNS rebinding. A rejection is answered with the exception's status
+		 * code. Defaults to accepting every request.
+		 */
+		public Builder httpHeaderValidator(ServerHttpHeaderValidator httpHeaderValidator) {
+			Assert.notNull(httpHeaderValidator, "httpHeaderValidator must not be null");
+			this.httpHeaderValidator = httpHeaderValidator;
+			return this;
+		}
+
 		public HttpServletMcpTransport build() {
 			McpJsonMapper mapper = this.jsonMapper != null ? this.jsonMapper : McpJsonDefaults.getMapper();
 			return new HttpServletMcpTransport(this.requestManager, mapper, this.mcpEndpoint, this.contextExtractor,
-					this.requestMaxSize);
+					this.requestMaxSize, this.httpHeaderValidator);
 		}
 
 	}

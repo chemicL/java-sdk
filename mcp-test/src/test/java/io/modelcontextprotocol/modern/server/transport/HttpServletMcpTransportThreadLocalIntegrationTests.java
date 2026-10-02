@@ -178,6 +178,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 			.header("Content-Type", "application/json")
 			.header("Accept", "application/json, text/event-stream")
 			.header("Mcp-Method", method)
+			.header("MCP-Protocol-Version", io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION)
 			.header("X-Principal", principal)
 			.POST(HttpRequest.BodyPublishers.ofString(JSON_MAPPER.writeValueAsString(body)));
 		if (name != null) {

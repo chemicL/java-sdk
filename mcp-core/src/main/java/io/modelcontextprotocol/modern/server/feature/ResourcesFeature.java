@@ -4,6 +4,7 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.Map;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -119,8 +120,10 @@ public final class ResourcesFeature implements McpFeature {
 		}
 		return this.repository.resolve(ctx, uri)
 			.map(handler -> FeatureHandlers.toMcpHandler(handler, ReadResourceRequest.class, this.jsonMapper))
-			.switchIfEmpty(Mono
-				.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("Unknown resource: " + uri).build()));
+			.switchIfEmpty(Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS)
+				.message("Unknown resource: " + uri)
+				.data(Map.of("uri", uri))
+				.build()));
 	}
 
 	private Result toListResult(ResourcesPage page) {

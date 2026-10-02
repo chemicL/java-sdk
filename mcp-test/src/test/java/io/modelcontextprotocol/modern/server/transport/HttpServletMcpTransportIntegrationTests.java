@@ -25,6 +25,7 @@ import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
+import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.apache.catalina.LifecycleException;
@@ -85,6 +86,10 @@ class HttpServletMcpTransportIntegrationTests {
 		HttpServletMcpTransport transport = HttpServletMcpTransport.builder(server)
 			.jsonMapper(JSON_MAPPER)
 			.endpoint(ENDPOINT)
+			.httpHeaderValidator(DefaultServerTransportSecurityValidator.builder()
+				.allowedOrigin("http://localhost:*")
+				.allowedHost("localhost:*")
+				.build())
 			.build();
 
 		tomcat = TomcatTestUtil.createTomcatServer("", PORT, transport);
@@ -116,6 +121,7 @@ class HttpServletMcpTransportIntegrationTests {
 			.header("Content-Type", "application/json")
 			.header("Accept", "application/json, text/event-stream")
 			.header("Mcp-Method", method)
+			.header("MCP-Protocol-Version", io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION)
 			.POST(HttpRequest.BodyPublishers.ofString(json));
 	}
 
@@ -196,6 +202,51 @@ class HttpServletMcpTransportIntegrationTests {
 		@SuppressWarnings("unchecked")
 		Map<String, Object> error = (Map<String, Object>) parsed.get("error");
 		assertThat(((Number) error.get("code")).intValue()).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
+	void protocolVersionHeaderMismatchIsRejected() throws Exception {
+		Map<String, Object> meta = meta();
+		meta.put(MetaKeys.PROTOCOL_VERSION, "v999.0.0");
+		HttpRequest request = post("server/discover", Map.of("_meta", meta)).build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
+	void missingProtocolVersionHeaderIsRejected() throws Exception {
+		HttpRequest request = HttpRequest.newBuilder()
+			.uri(URI.create("http://localhost:" + PORT + ENDPOINT))
+			.header("Content-Type", "application/json")
+			.header("Accept", "application/json, text/event-stream")
+			.header("Mcp-Method", "server/discover")
+			.POST(HttpRequest.BodyPublishers.ofString(JSON_MAPPER.writeValueAsString(
+					Map.of("jsonrpc", "2.0", "id", 1, "method", "server/discover", "params", Map.of("_meta", meta())))))
+			.build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
+	void disallowedOriginIsRejected() throws Exception {
+		HttpRequest request = post("server/discover", Map.of("_meta", meta()))
+			.header("Origin", "http://evil.example.com")
+			.build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(403);
+	}
+
+	private static int errorCode(HttpResponse<String> response) throws IOException {
+		Map<String, Object> parsed = JSON_MAPPER.readValue(response.body(), new TypeRef<Map<String, Object>>() {
+		});
+		@SuppressWarnings("unchecked")
+		Map<String, Object> error = (Map<String, Object>) parsed.get("error");
+		return ((Number) error.get("code")).intValue();
 	}
 
 	@Test
