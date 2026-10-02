@@ -16,15 +16,15 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.TextContent;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.AsyncToolHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
-import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.startup.Tomcat;
@@ -59,13 +59,16 @@ class HttpServletMcpTransportIntegrationTests {
 			public Mono<AsyncToolHandler> resolve(io.modelcontextprotocol.modern.server.McpRequestContext ctx,
 					String name) {
 				if ("echo".equals(name)) {
-					return Mono.just(AsyncToolHandler.of((c, req) -> Mono
-						.just(CallToolResult.builder().addContent(new TextContent("echo:" + req.name())).build())));
+					return Mono.just(AsyncToolHandler.of((c,
+							req) -> Mono.just(CallToolResult.builder()
+								.addContent(TextContent.builder("echo:" + req.name()).build())
+								.build())));
 				}
 				if ("streamer".equals(name)) {
-					return Mono
-						.just(AsyncToolHandler.streaming((c, req, notifier) -> notifier.progress(1.0, 1.0, "done")
-							.thenReturn(CallToolResult.builder().addContent(new TextContent("streamed")).build())));
+					return Mono.just(AsyncToolHandler.streaming((c, req, notifier) -> notifier
+						.progress(1.0, 1.0, "done")
+						.thenReturn(
+								CallToolResult.builder().addContent(TextContent.builder("streamed").build()).build())));
 				}
 				return Mono.empty();
 			}

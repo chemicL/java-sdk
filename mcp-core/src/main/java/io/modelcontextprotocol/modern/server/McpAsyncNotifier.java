@@ -4,7 +4,7 @@
 
 package io.modelcontextprotocol.modern.server;
 
-import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
+import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import reactor.core.publisher.Mono;
 
 /**

@@ -24,7 +24,7 @@ public interface RequestStateCodec {
 	/**
 	 * Open a previously sealed value, verifying it was produced for this same principal,
 	 * method and primitive and has not expired.
-	 * @throws io.modelcontextprotocol.spec.McpError ({@code -32602}) if verification
+	 * @throws io.modelcontextprotocol.modern.McpError ({@code -32602}) if verification
 	 * fails
 	 */
 	String open(McpRequestContext ctx, String sealed);

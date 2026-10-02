@@ -7,7 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.List;
 
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.spec.McpSchema.Resource;
+import io.modelcontextprotocol.modern.McpSchema.Resource;
 
 /**
  * A page of {@code resources/list}. See {@link ToolsPage} for the caching-hint

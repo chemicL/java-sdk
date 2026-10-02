@@ -12,19 +12,20 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.TextContent;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpServer;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.junit.jupiter.api.Test;
@@ -37,9 +38,7 @@ class ToolsFeatureTests {
 
 	private static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
 
-	private static final io.modelcontextprotocol.spec.McpSchema.Tool ECHO_TOOL = io.modelcontextprotocol.spec.McpSchema.Tool
-		.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA)
-		.build();
+	private static final Tool ECHO_TOOL = Tool.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA).build();
 
 	private static Map<String, Object> meta() {
 		Map<String, Object> meta = new java.util.HashMap<>();
@@ -89,7 +88,7 @@ class ToolsFeatureTests {
 					String name) {
 				return Mono.just(AsyncToolHandler.of((c,
 						req) -> Mono.just(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
-							.addContent(new TextContent("echo:" + req.name()))
+							.addContent(TextContent.builder("echo:" + req.name()).build())
 							.build())));
 			}
 		};
@@ -113,7 +112,7 @@ class ToolsFeatureTests {
 					String name) {
 				return Mono.just(AsyncToolHandler.streaming((c, req, notifier) -> notifier.progress(1.0, 1.0, "done")
 					.thenReturn(io.modelcontextprotocol.modern.McpSchema.CallToolResult.builder()
-						.addContent(new TextContent("ok"))
+						.addContent(TextContent.builder("ok").build())
 						.build())));
 			}
 		};
@@ -126,9 +125,7 @@ class ToolsFeatureTests {
 
 	private static final ThreadLocal<String> PRINCIPAL = new ThreadLocal<>();
 
-	private static final io.modelcontextprotocol.spec.McpSchema.Tool ADMIN_TOOL = io.modelcontextprotocol.spec.McpSchema.Tool
-		.builder("admin", ToolsUtils.EMPTY_JSON_SCHEMA)
-		.build();
+	private static final Tool ADMIN_TOOL = Tool.builder("admin", ToolsUtils.EMPTY_JSON_SCHEMA).build();
 
 	private static JSONRPCRequest callEcho() {
 		Map<String, Object> meta = meta();
@@ -137,7 +134,7 @@ class ToolsFeatureTests {
 	}
 
 	private static CallToolResult greeting(String principal) {
-		return CallToolResult.builder().addContent(new TextContent("hello " + principal)).build();
+		return CallToolResult.builder().addContent(TextContent.builder("hello " + principal).build()).build();
 	}
 
 	@SuppressWarnings("unchecked")

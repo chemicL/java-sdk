@@ -7,7 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.List;
 
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.spec.McpSchema.Tool;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 
 /**
  * A page of {@code tools/list}. {@code ttlMs}/{@code cacheScope} are optional; when

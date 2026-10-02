@@ -7,12 +7,12 @@ package io.modelcontextprotocol.modern.server;
 import java.util.Map;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
+import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
-import io.modelcontextprotocol.spec.McpError;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
 import io.modelcontextprotocol.util.Assert;
 
 /**

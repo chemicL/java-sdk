@@ -4,8 +4,8 @@
 
 package io.modelcontextprotocol.modern.server;
 
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 

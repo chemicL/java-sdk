@@ -5,8 +5,8 @@
 package io.modelcontextprotocol.modern.server;
 
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import reactor.core.publisher.Mono;
 
 /**

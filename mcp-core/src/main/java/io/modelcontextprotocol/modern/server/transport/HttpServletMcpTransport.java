@@ -15,16 +15,17 @@ import java.util.Map;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.JsonRpc;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestHandler;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
-import io.modelcontextprotocol.spec.McpError;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.util.Assert;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.AsyncEvent;
@@ -164,7 +165,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 		JSONRPCMessage message;
 		try {
-			message = io.modelcontextprotocol.spec.McpSchema.deserializeJsonRpcMessage(this.jsonMapper, body);
+			message = JsonRpc.deserializeMessage(this.jsonMapper, body);
 		}
 		catch (IllegalArgumentException | IOException e) {
 			writeJsonError(response, HttpServletResponse.SC_BAD_REQUEST,

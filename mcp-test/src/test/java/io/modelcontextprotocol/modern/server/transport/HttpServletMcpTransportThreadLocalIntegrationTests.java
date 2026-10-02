@@ -19,16 +19,16 @@ import java.util.stream.Stream;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.TextContent;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.SyncToolHandler;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
-import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.util.ToolsUtils;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -99,7 +99,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 	}
 
 	private static CallToolResult text(String text) {
-		return CallToolResult.builder().addContent(new TextContent(text)).build();
+		return CallToolResult.builder().addContent(TextContent.builder(text).build()).build();
 	}
 
 	@BeforeAll

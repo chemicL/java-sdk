@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * @author Anurag Pant
  * @author Dariusz Jędrzejczyk
  */
-public final class McpSchema { // TODO: remove dependency on this from the modern package
+public final class McpSchema {
 
 	private static final Logger logger = LoggerFactory.getLogger(McpSchema.class);
 

@@ -7,6 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
@@ -19,7 +20,6 @@ import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
 import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpRouter;
-import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 

@@ -4,9 +4,9 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.CompleteRequest;
 import io.modelcontextprotocol.modern.McpSchema.CompleteResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
-import io.modelcontextprotocol.spec.McpSchema.CompleteRequest;
 import reactor.core.publisher.Mono;
 
 /**

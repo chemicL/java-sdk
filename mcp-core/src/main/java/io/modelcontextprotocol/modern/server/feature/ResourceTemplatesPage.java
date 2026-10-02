@@ -7,7 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.List;
 
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.spec.McpSchema.ResourceTemplate;
+import io.modelcontextprotocol.modern.McpSchema.ResourceTemplate;
 
 /**
  * A page of {@code resources/templates/list}.

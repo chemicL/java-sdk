@@ -1,0 +1,163 @@
+/*
+ * Copyright 2026-2026 the original author or authors.
+ */
+
+package io.modelcontextprotocol.modern;
+
+import java.io.IOException;
+import java.util.HashMap;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.util.Assert;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * The <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a> envelope that
+ * carries {@link McpSchema} payloads, with MCP's restrictions on request ids.
+ *
+ * @author Dariusz Jędrzejczyk
+ */
+public final class JsonRpc {
+
+	private static final Logger logger = LoggerFactory.getLogger(JsonRpc.class);
+
+	private static final TypeRef<HashMap<String, Object>> MAP_TYPE_REF = new TypeRef<>() {
+	};
+
+	public static final String JSONRPC_VERSION = "2.0";
+
+	private JsonRpc() {
+	}
+
+	/**
+	 * Parses a JSON-RPC message, picking the concrete type from the fields present.
+	 * @throws IOException if {@code jsonText} is not valid JSON
+	 * @throws IllegalArgumentException if it is not a request, notification or response
+	 */
+	public static JSONRPCMessage deserializeMessage(McpJsonMapper jsonMapper, String jsonText) throws IOException {
+		logger.debug("Received JSON message: {}", jsonText);
+
+		var map = jsonMapper.readValue(jsonText, MAP_TYPE_REF);
+
+		if (map.containsKey("method") && map.containsKey("id")) {
+			return jsonMapper.convertValue(map, JSONRPCRequest.class);
+		}
+		else if (map.containsKey("method") && !map.containsKey("id")) {
+			return jsonMapper.convertValue(map, JSONRPCNotification.class);
+		}
+		else if (map.containsKey("result") || map.containsKey("error")) {
+			return jsonMapper.convertValue(map, JSONRPCResponse.class);
+		}
+
+		throw new IllegalArgumentException("Cannot deserialize JSONRPCMessage: " + jsonText);
+	}
+
+	public interface JSONRPCMessage {
+
+		String jsonrpc();
+
+	}
+
+	/**
+	 * A request that expects a response. MCP requires a non-null string or integer
+	 * {@code id}.
+	 */
+	@JsonInclude(JsonInclude.Include.NON_ABSENT)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JSONRPCRequest( // @formatter:off
+		@JsonProperty("jsonrpc") String jsonrpc,
+		@JsonProperty("method") String method,
+		@JsonProperty("id") Object id,
+		@JsonProperty("params") Object params) implements JSONRPCMessage { // @formatter:on
+
+		public JSONRPCRequest {
+			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.notNull(id, "MCP requests MUST include an ID - null IDs are not allowed");
+			Assert.isTrue(id instanceof String || id instanceof Integer || id instanceof Long,
+					"MCP requests MUST have an ID that is either a string or integer");
+			Assert.notNull(method, "MCP request method must not be null");
+		}
+
+		public JSONRPCRequest(String method, Object id, Object params) {
+			this(JSONRPC_VERSION, method, id, params);
+		}
+
+		public JSONRPCRequest(String method, Object id) {
+			this(JSONRPC_VERSION, method, id, null);
+		}
+	}
+
+	/** A notification, which never receives a response. */
+	@JsonInclude(JsonInclude.Include.NON_ABSENT)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JSONRPCNotification( // @formatter:off
+		@JsonProperty("jsonrpc") String jsonrpc,
+		@JsonProperty("method") String method,
+		@JsonProperty("params") Object params) implements JSONRPCMessage { // @formatter:on
+
+		public JSONRPCNotification {
+			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.notNull(method, "MCP notification method must not be null");
+		}
+
+		public JSONRPCNotification(String method, Object params) {
+			this(JSONRPC_VERSION, method, params);
+		}
+
+		public JSONRPCNotification(String method) {
+			this(JSONRPC_VERSION, method, null);
+		}
+	}
+
+	/**
+	 * A response to a request, carrying exactly one of {@code result} or {@code error}.
+	 */
+	@JsonInclude(JsonInclude.Include.NON_ABSENT)
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record JSONRPCResponse( // @formatter:off
+		@JsonProperty("jsonrpc") String jsonrpc,
+		@JsonProperty("id") Object id,
+		@JsonProperty("result") Object result,
+		@JsonProperty("error") JSONRPCError error) implements JSONRPCMessage { // @formatter:on
+
+		public JSONRPCResponse {
+			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
+			Assert.notNull(id, "MCP responses MUST include an ID - null IDs are not allowed");
+			Assert.isTrue(id instanceof String || id instanceof Integer || id instanceof Long,
+					"MCP responses MUST have an ID that is either a string or integer");
+			Assert.isTrue((result != null) ^ (error != null), "MCP responses MUST either have a result or error");
+		}
+
+		public static JSONRPCResponse result(Object id, Object result) {
+			return new JSONRPCResponse(JSONRPC_VERSION, id, result, null);
+		}
+
+		public static JSONRPCResponse error(Object id, JSONRPCError error) {
+			return new JSONRPCResponse(JSONRPC_VERSION, id, null, error);
+		}
+
+		@JsonInclude(JsonInclude.Include.NON_ABSENT)
+		@JsonIgnoreProperties(ignoreUnknown = true)
+		public record JSONRPCError( // @formatter:off
+			@JsonProperty("code") Integer code,
+			@JsonProperty("message") String message,
+			@JsonProperty("data") Object data) { // @formatter:on
+
+			public JSONRPCError {
+				Assert.notNull(code, "code must not be null");
+				Assert.notNull(message, "message must not be null");
+			}
+
+			public JSONRPCError(Integer code, String message) {
+				this(code, message, null);
+			}
+
+		}
+	}
+
+}

@@ -4,13 +4,17 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.Map;
+
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CompleteRequest;
+import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
 import io.modelcontextprotocol.modern.server.McpHandler;
 import io.modelcontextprotocol.modern.server.McpRouter;
-import io.modelcontextprotocol.spec.McpSchema.CompleteRequest;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -47,6 +51,10 @@ public final class CompletionsFeature implements McpFeature {
 				return Mono.empty();
 			}
 			McpHandler handler = (c, params) -> {
+				if (!(params instanceof Map<?, ?> map) || map.get("ref") == null) {
+					return Mono
+						.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.ref is required").build());
+				}
 				CompleteRequest request = this.jsonMapper.convertValue(params, CompleteRequest.class);
 				return this.repository.complete(c, request).map(result -> result);
 			};

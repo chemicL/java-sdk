@@ -4,7 +4,7 @@
 
 package io.modelcontextprotocol.modern.server;
 
-import io.modelcontextprotocol.spec.McpSchema.LoggingLevel;
+import io.modelcontextprotocol.modern.McpSchema.LoggingLevel;
 
 /**
  * The blocking counterpart of {@link McpAsyncNotifier}, for sync handlers. No Reactor

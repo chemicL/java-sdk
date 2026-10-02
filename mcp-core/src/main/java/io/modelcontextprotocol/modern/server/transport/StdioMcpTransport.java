@@ -16,12 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.JsonRpc;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestHandler;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -133,7 +134,7 @@ public class StdioMcpTransport {
 	private void handleLine(String line) {
 		JSONRPCMessage message;
 		try {
-			message = io.modelcontextprotocol.spec.McpSchema.deserializeJsonRpcMessage(this.jsonMapper, line);
+			message = JsonRpc.deserializeMessage(this.jsonMapper, line);
 		}
 		catch (IllegalArgumentException | IOException e) {
 			emitParseError();

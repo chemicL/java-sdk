@@ -8,14 +8,16 @@ import java.util.List;
 import java.util.Map;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
+import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -46,10 +48,8 @@ class McpServerTests {
 			if (!method.equals(ctx.method())) {
 				return Mono.empty();
 			}
-			McpHandler handler = (c,
-					params) -> Mono.just(CallToolResult.builder()
-						.addContent(new io.modelcontextprotocol.spec.McpSchema.TextContent("ok"))
-						.build());
+			McpHandler handler = (c, params) -> Mono
+				.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build());
 			return Mono.just(handler);
 		};
 	}
@@ -177,9 +177,7 @@ class McpServerTests {
 			public Mono<Result> handle(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
 				return notifier.progress(1.0, 2.0, "half")
 					.then(notifier.progress(2.0, 2.0, "done"))
-					.then(Mono.just(CallToolResult.builder()
-						.addContent(new io.modelcontextprotocol.spec.McpSchema.TextContent("ok"))
-						.build()));
+					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
 			}
 		};
 		McpFeature feature = () -> ctx -> "tools/call".equals(ctx.method()) ? Mono.just(streaming) : Mono.empty();
@@ -193,7 +191,7 @@ class McpServerTests {
 
 		StepVerifier.create(((McpInvocation.Streaming) invocation).messages())
 			.expectNextCount(2)
-			.expectNextMatches(msg -> msg instanceof io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse)
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
 			.verifyComplete();
 	}
 
@@ -203,9 +201,7 @@ class McpServerTests {
 			@Override
 			public Mono<Result> handle(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
 				return notifier.progress(1.0, null, null)
-					.then(Mono.just(CallToolResult.builder()
-						.addContent(new io.modelcontextprotocol.spec.McpSchema.TextContent("ok"))
-						.build()));
+					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
 			}
 		};
 		McpFeature feature = () -> ctx -> Mono.just(streaming);
@@ -215,7 +211,7 @@ class McpServerTests {
 		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
 			.block();
 		StepVerifier.create(invocation.messages())
-			.expectNextMatches(msg -> msg instanceof io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse)
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
 			.verifyComplete();
 	}
 

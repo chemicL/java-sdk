@@ -17,13 +17,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestHandler;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCResponse;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -154,8 +155,7 @@ class StdioMcpTransportTests {
 	void streamingRequestWritesNotificationsBeforeResponse() throws Exception {
 		McpRequestHandler handler = handlerOf((transportContext,
 				request) -> Mono.just(McpInvocation.streaming(reactor.core.publisher.Flux.just(
-						(io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage) new JSONRPCNotification(
-								"notifications/progress", Map.of("progress", 1.0)),
+						(JSONRPCMessage) new JSONRPCNotification("notifications/progress", Map.of("progress", 1.0)),
 						JSONRPCResponse.result(request.id(), Map.of("resultType", "complete"))))));
 
 		start(handler);

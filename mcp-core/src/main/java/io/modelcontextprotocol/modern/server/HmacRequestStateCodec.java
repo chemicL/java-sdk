@@ -20,8 +20,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
-import io.modelcontextprotocol.spec.McpError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

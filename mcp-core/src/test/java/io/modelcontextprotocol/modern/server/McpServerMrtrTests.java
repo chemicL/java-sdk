@@ -4,26 +4,27 @@
 
 package io.modelcontextprotocol.modern.server;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
+import io.modelcontextprotocol.modern.McpSchema.ElicitFormRequest;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
+import io.modelcontextprotocol.modern.McpSchema.TextContent;
+import io.modelcontextprotocol.modern.McpSchema.TextResourceContents;
 import io.modelcontextprotocol.modern.server.feature.AsyncResourceHandler;
 import io.modelcontextprotocol.modern.server.feature.AsyncToolHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncResourceRepository;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
-import io.modelcontextprotocol.spec.McpSchema.ElicitFormRequest;
-import io.modelcontextprotocol.spec.McpSchema.Implementation;
-import io.modelcontextprotocol.spec.McpSchema.JSONRPCRequest;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -58,7 +59,7 @@ class McpServerMrtrTests {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
 			@Override
 			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(java.util.List.of()));
+				return Mono.just(ToolsPage.of(List.of()));
 			}
 
 			@Override
@@ -66,13 +67,13 @@ class McpServerMrtrTests {
 				return Mono.just(AsyncToolHandler.withInput((c, req) -> {
 					if (req.requestState() != null) {
 						seenRequestState.set(req.requestState());
-						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult
-							.complete(CallToolResult.builder().addContent(new TextContent("resumed")).build()));
+						return Mono.just(io.modelcontextprotocol.modern.server.McpRoundResult.complete(
+								CallToolResult.builder().addContent(TextContent.builder("resumed").build()).build()));
 					}
 					return Mono.just(inputRequired(InputRequiredResult.builder()
-							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
-							.requestState("secret-plaintext")
-							.build()));
+						.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
+						.requestState("secret-plaintext")
+						.build()));
 				}));
 			}
 		};
@@ -116,23 +117,23 @@ class McpServerMrtrTests {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
 			@Override
 			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(java.util.List.of()));
+				return Mono.just(ToolsPage.of(List.of()));
 			}
 
 			@Override
 			public Mono<AsyncToolHandler> resolve(McpRequestContext ctx, String name) {
-				 return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(
-						 inputRequired(InputRequiredResult.builder()
-								 .elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type",
-										 "object")).build())
-								 .build()))));
+				return Mono.just(AsyncToolHandler.withInput((c,
+						req) -> Mono.just(inputRequired(InputRequiredResult.builder()
+							.elicit("q1", ElicitFormRequest.builder("Confirm?", Map.of("type", "object")).build())
+							.build()))));
 				// FIXME: This paradigm can fail because you could do this:
-//				return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(new McpRoundResult<CallToolResult>() {
-//					@Override
-//					public McpSchema.Result result() {
-//						return new McpSchema.GetPromptResult(null, null, null, null);
-//					}
-//				})));
+				// return Mono.just(AsyncToolHandler.withInput((c, req) -> Mono.just(new
+				// McpRoundResult<CallToolResult>() {
+				// @Override
+				// public McpSchema.Result result() {
+				// return new McpSchema.GetPromptResult(null, null, null, null);
+				// }
+				// })));
 			}
 		};
 		McpServer server = McpServer.builder()
@@ -159,17 +160,14 @@ class McpServerMrtrTests {
 		McpAsyncResourceRepository repo = new McpAsyncResourceRepository() {
 			@Override
 			public Mono<ResourcesPage> list(McpRequestContext ctx, String cursor) {
-				return Mono.just(ResourcesPage.of(java.util.List.of()));
+				return Mono.just(ResourcesPage.of(List.of()));
 			}
 
 			@Override
 			public Mono<AsyncResourceHandler> resolve(McpRequestContext ctx, String uri) {
-				return Mono.just(
-						AsyncResourceHandler.of((c,
-								req) -> Mono.just(ReadResourceResult.builder(java.util.List
-									.of(new io.modelcontextprotocol.spec.McpSchema.TextResourceContents(req.uri(),
-											"text/plain", "content", null)))
-									.build())));
+				return Mono.just(AsyncResourceHandler.of((c, req) -> Mono.just(ReadResourceResult
+					.builder(List.of(new TextResourceContents(req.uri(), "text/plain", "content", null)))
+					.build())));
 			}
 		};
 		McpServer server = McpServer.builder()

@@ -7,7 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.List;
 
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.spec.McpSchema.Prompt;
+import io.modelcontextprotocol.modern.McpSchema.Prompt;
 
 /**
  * A page of {@code prompts/list}.
