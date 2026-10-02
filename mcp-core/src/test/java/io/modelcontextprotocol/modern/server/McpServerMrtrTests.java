@@ -27,6 +27,9 @@ import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
+import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -82,7 +85,7 @@ class McpServerMrtrTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.tools(repo)
+			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
 		Map<String, Object> params = new java.util.HashMap<>();
@@ -143,7 +146,7 @@ class McpServerMrtrTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.tools(repo)
+			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
 		Map<String, Object> params = new java.util.HashMap<>();
@@ -179,7 +182,7 @@ class McpServerMrtrTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.resources(repo)
+			.feature(ResourcesFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.build();
 
 		Map<String, Object> params = new java.util.HashMap<>();

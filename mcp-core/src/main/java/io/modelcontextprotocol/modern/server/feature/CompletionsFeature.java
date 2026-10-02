@@ -7,6 +7,7 @@ package io.modelcontextprotocol.modern.server.feature;
 import java.util.Map;
 import java.util.Set;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
@@ -33,6 +34,16 @@ public final class CompletionsFeature implements McpFeature {
 	private CompletionsFeature(McpAsyncCompletionRepository repository, McpJsonMapper jsonMapper) {
 		this.repository = repository;
 		this.jsonMapper = jsonMapper;
+	}
+
+	/** Uses the default JSON mapper. */
+	public static CompletionsFeature of(McpAsyncCompletionRepository repository) {
+		return of(repository, McpJsonDefaults.getMapper());
+	}
+
+	/** Uses the default JSON mapper. */
+	public static CompletionsFeature ofSync(McpSyncCompletionRepository repository) {
+		return ofSync(repository, McpJsonDefaults.getMapper());
 	}
 
 	public static CompletionsFeature of(McpAsyncCompletionRepository repository, McpJsonMapper jsonMapper) {

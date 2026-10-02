@@ -31,8 +31,11 @@ class CompletionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(Implementation.builder("test-server", "1.0.0").build())
 			.jsonMapper(new GsonMcpJsonMapper())
-			.completions((McpAsyncCompletionRepository) (ctx, request) -> Mono
-				.just(CompleteResult.of(new CompleteResult.Completion(List.of()))))
+			.feature(
+					CompletionsFeature.of(
+							(McpAsyncCompletionRepository) (ctx, request) -> Mono
+								.just(CompleteResult.of(new CompleteResult.Completion(List.of()))),
+							new GsonMcpJsonMapper()))
 			.build();
 		Map<String, Object> meta = new HashMap<>();
 		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);

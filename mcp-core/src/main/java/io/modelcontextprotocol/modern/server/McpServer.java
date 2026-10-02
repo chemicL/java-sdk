@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -38,19 +37,7 @@ import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityD
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.UnsupportedProtocolVersionData;
-import io.modelcontextprotocol.modern.server.feature.CompletionsFeature;
-import io.modelcontextprotocol.modern.server.feature.McpAsyncCompletionRepository;
-import io.modelcontextprotocol.modern.server.feature.McpAsyncPromptRepository;
-import io.modelcontextprotocol.modern.server.feature.McpAsyncResourceRepository;
-import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
-import io.modelcontextprotocol.modern.server.feature.McpSyncCompletionRepository;
-import io.modelcontextprotocol.modern.server.feature.McpSyncPromptRepository;
-import io.modelcontextprotocol.modern.server.feature.McpSyncResourceRepository;
-import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
-import io.modelcontextprotocol.modern.server.feature.PromptsFeature;
-import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
-import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -387,17 +374,9 @@ public final class McpServer implements McpRequestManager {
 
 		private final List<McpFeature> features = new ArrayList<>();
 
-		private long defaultTtlMs = 0L;
+		private long discoverTtlMs = 0L;
 
-		private CacheScope defaultCacheScope = CacheScope.PRIVATE;
-
-		private Function<McpJsonMapper, McpFeature> toolsFeatureFactory;
-
-		private Function<McpJsonMapper, McpFeature> resourcesFeatureFactory;
-
-		private Function<McpJsonMapper, McpFeature> promptsFeatureFactory;
-
-		private Function<McpJsonMapper, McpFeature> completionsFeatureFactory;
+		private CacheScope discoverCacheScope = CacheScope.PRIVATE;
 
 		private RequestStateCodec requestStateCodec;
 
@@ -433,56 +412,15 @@ public final class McpServer implements McpRequestManager {
 			return this;
 		}
 
-		public Builder tools(McpAsyncToolRepository repository) {
-			this.toolsFeatureFactory = mapper -> ToolsFeature.of(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder tools(McpSyncToolRepository repository) {
-			this.toolsFeatureFactory = mapper -> ToolsFeature.ofSync(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder resources(McpAsyncResourceRepository repository) {
-			this.resourcesFeatureFactory = mapper -> ResourcesFeature.of(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder resources(McpSyncResourceRepository repository) {
-			this.resourcesFeatureFactory = mapper -> ResourcesFeature.ofSync(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder prompts(McpAsyncPromptRepository repository) {
-			this.promptsFeatureFactory = mapper -> PromptsFeature.of(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder prompts(McpSyncPromptRepository repository) {
-			this.promptsFeatureFactory = mapper -> PromptsFeature.ofSync(repository, mapper, this.defaultTtlMs,
-					this.defaultCacheScope);
-			return this;
-		}
-
-		public Builder completions(McpAsyncCompletionRepository repository) {
-			this.completionsFeatureFactory = mapper -> CompletionsFeature.of(repository, mapper);
-			return this;
-		}
-
-		public Builder completions(McpSyncCompletionRepository repository) {
-			this.completionsFeatureFactory = mapper -> CompletionsFeature.ofSync(repository, mapper);
+		public Builder features(List<? extends McpFeature> features) {
+			Assert.notNull(features, "features must not be null");
+			features.forEach(this::feature);
 			return this;
 		}
 
 		/**
-		 * Registers {@code subscriptions/listen}, backed by {@code feed}. Must see the
-		 * final set of registered primitives to decide which change types it can honour,
-		 * so it is wired up last, after every other feature.
+		 * Registers {@code subscriptions/listen}, backed by {@code feed}, for the tools,
+		 * prompts and resources features that are registered.
 		 */
 		public Builder subscriptions(McpChangeFeed feed) {
 			Assert.notNull(feed, "feed must not be null");
@@ -501,43 +439,20 @@ public final class McpServer implements McpRequestManager {
 		}
 
 		/**
-		 * Default caching hints applied by features that don't set their own. Never
-		 * default {@code cacheScope} to {@code PUBLIC}: doing so lets any client, gateway
-		 * or proxy reuse a response across access tokens.
+		 * Caching hints for the {@code server/discover} result. Defaults to no caching.
 		 */
-		public Builder cacheDefaults(long ttlMs, CacheScope cacheScope) {
+		public Builder discoverCache(long ttlMs, CacheScope cacheScope) {
 			Assert.notNull(cacheScope, "cacheScope must not be null");
-			this.defaultTtlMs = ttlMs;
-			this.defaultCacheScope = cacheScope;
+			this.discoverTtlMs = ttlMs;
+			this.discoverCacheScope = cacheScope;
 			return this;
-		}
-
-		long defaultTtlMs() {
-			return this.defaultTtlMs;
-		}
-
-		CacheScope defaultCacheScope() {
-			return this.defaultCacheScope;
 		}
 
 		public McpServer build() {
 			Assert.notNull(this.serverInfo, "serverInfo must not be null");
 			McpJsonMapper mapper = this.jsonMapper != null ? this.jsonMapper : McpJsonDefaults.getMapper();
 
-			List<McpFeature> allFeatures = new ArrayList<>();
-			if (this.toolsFeatureFactory != null) {
-				allFeatures.add(this.toolsFeatureFactory.apply(mapper));
-			}
-			if (this.resourcesFeatureFactory != null) {
-				allFeatures.add(this.resourcesFeatureFactory.apply(mapper));
-			}
-			if (this.promptsFeatureFactory != null) {
-				allFeatures.add(this.promptsFeatureFactory.apply(mapper));
-			}
-			if (this.completionsFeatureFactory != null) {
-				allFeatures.add(this.completionsFeatureFactory.apply(mapper));
-			}
-			allFeatures.addAll(this.features);
+			List<McpFeature> allFeatures = new ArrayList<>(this.features);
 
 			ServerCapabilities.Builder capabilitiesBuilder = ServerCapabilities.builder();
 			for (McpFeature feature : allFeatures) {
@@ -555,7 +470,7 @@ public final class McpServer implements McpRequestManager {
 				allFeatures.add(subscriptionsFeature);
 			}
 			allFeatures.add(new DiscoverFeature(this.supportedVersions, capabilitiesBuilder.build(), this.instructions,
-					this.defaultTtlMs, this.defaultCacheScope));
+					this.discoverTtlMs, this.discoverCacheScope));
 
 			Map<String, McpFeature> routes = new HashMap<>();
 			Set<String> inputRequiredMethods = new HashSet<>();

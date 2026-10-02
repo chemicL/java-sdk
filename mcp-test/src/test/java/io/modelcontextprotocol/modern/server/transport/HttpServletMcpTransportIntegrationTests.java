@@ -29,6 +29,7 @@ import io.modelcontextprotocol.server.transport.TomcatTestUtil;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.startup.Tomcat;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -78,7 +79,7 @@ class HttpServletMcpTransportIntegrationTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(Implementation.builder("modern-test-server", "1.0.0").build())
 			.jsonMapper(JSON_MAPPER)
-			.tools(repo)
+			.feature(ToolsFeature.of(repo))
 			.build();
 
 		HttpServletMcpTransport transport = HttpServletMcpTransport.builder(server)

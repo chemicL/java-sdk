@@ -6,6 +6,7 @@ package io.modelcontextprotocol.modern.server.feature;
 
 import java.util.Set;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
@@ -44,6 +45,16 @@ public final class PromptsFeature implements McpFeature {
 		this.jsonMapper = jsonMapper;
 		this.defaultTtlMs = defaultTtlMs;
 		this.defaultCacheScope = defaultCacheScope;
+	}
+
+	/** Uses the default JSON mapper and no caching. */
+	public static PromptsFeature of(McpAsyncPromptRepository repository) {
+		return of(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
+	}
+
+	/** Uses the default JSON mapper and no caching. */
+	public static PromptsFeature ofSync(McpSyncPromptRepository repository) {
+		return ofSync(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
 	}
 
 	public static PromptsFeature of(McpAsyncPromptRepository repository, McpJsonMapper jsonMapper, long defaultTtlMs,

@@ -40,6 +40,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.startup.Tomcat;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -136,7 +137,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(Implementation.builder("thread-local-test-server", "1.0.0").build())
 			.jsonMapper(JSON_MAPPER)
-			.tools(repo)
+			.feature(ToolsFeature.ofSync(repo))
 			.build();
 
 		HttpServletMcpTransport transport = HttpServletMcpTransport.builder(server)

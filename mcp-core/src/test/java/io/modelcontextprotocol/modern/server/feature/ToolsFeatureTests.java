@@ -29,6 +29,8 @@ import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import io.modelcontextprotocol.util.ToolsUtils;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
+import io.modelcontextprotocol.modern.server.McpFeature;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -46,6 +48,14 @@ class ToolsFeatureTests {
 		meta.put(MetaKeys.PROTOCOL_VERSION, io.modelcontextprotocol.modern.McpSchema.LATEST_PROTOCOL_VERSION);
 		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
 		return meta;
+	}
+
+	private static McpFeature tools(McpAsyncToolRepository repository) {
+		return ToolsFeature.of(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
+	}
+
+	private static McpFeature tools(McpSyncToolRepository repository) {
+		return ToolsFeature.ofSync(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
 	}
 
 	private static McpServer.Builder baseBuilder() {
@@ -66,7 +76,7 @@ class ToolsFeatureTests {
 				return Mono.empty();
 			}
 		};
-		McpServer server = baseBuilder().tools(repo).build();
+		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "does-not-exist"));
 
 		StepVerifier
@@ -93,7 +103,7 @@ class ToolsFeatureTests {
 							.build())));
 			}
 		};
-		McpServer server = baseBuilder().tools(repo).build();
+		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
 
 		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
@@ -117,7 +127,7 @@ class ToolsFeatureTests {
 						.build())));
 			}
 		};
-		McpServer server = baseBuilder().tools(repo).build();
+		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
 
 		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
@@ -200,7 +210,8 @@ class ToolsFeatureTests {
 	@Test
 	void blockingCallerRunsSyncSingleHandlerOnItsOwnThread() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
-		McpServer server = baseBuilder().tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
+		McpServer server = baseBuilder().feature(tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)))
+			.build();
 
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
@@ -221,7 +232,8 @@ class ToolsFeatureTests {
 		List<JSONRPCMessage> delivered = new CopyOnWriteArrayList<>();
 		AtomicInteger deliveredWhenProgressReturned = new AtomicInteger(-1);
 		McpServer server = baseBuilder()
-			.tools(streamingGreetingRepo(c -> PRINCIPAL.get(), handlerThread, delivered, deliveredWhenProgressReturned))
+			.feature(tools(streamingGreetingRepo(c -> PRINCIPAL.get(), handlerThread, delivered,
+					deliveredWhenProgressReturned)))
 			.build();
 
 		PRINCIPAL.set("alice");
@@ -254,7 +266,7 @@ class ToolsFeatureTests {
 				return null;
 			}
 		};
-		McpServer server = baseBuilder().tools(repo).build();
+		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest listTools = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta()));
 
 		PRINCIPAL.set("admin");
@@ -276,7 +288,8 @@ class ToolsFeatureTests {
 	@Test
 	void nonBlockingCallerOffloadsSyncSingleHandler() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
-		McpServer server = baseBuilder().tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)).build();
+		McpServer server = baseBuilder().feature(tools(singleGreetingRepo(c -> PRINCIPAL.get(), handlerThread)))
+			.build();
 
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
@@ -296,7 +309,7 @@ class ToolsFeatureTests {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
 		List<JSONRPCMessage> delivered = new CopyOnWriteArrayList<>();
 		McpServer server = baseBuilder()
-			.tools(streamingGreetingRepo(c -> PRINCIPAL.get(), handlerThread, delivered, new AtomicInteger()))
+			.feature(tools(streamingGreetingRepo(c -> PRINCIPAL.get(), handlerThread, delivered, new AtomicInteger())))
 			.build();
 
 		PRINCIPAL.set("alice");
@@ -316,7 +329,7 @@ class ToolsFeatureTests {
 	void offloadedSyncHandlerSeesPrincipalCapturedInTransportContext() {
 		AtomicReference<String> handlerThread = new AtomicReference<>();
 		McpServer server = baseBuilder()
-			.tools(singleGreetingRepo(c -> (String) c.transportContext().get("principal"), handlerThread))
+			.feature(tools(singleGreetingRepo(c -> (String) c.transportContext().get("principal"), handlerThread)))
 			.build();
 		McpTransportContext transportContext = McpTransportContext.create(Map.of("principal", "alice"));
 

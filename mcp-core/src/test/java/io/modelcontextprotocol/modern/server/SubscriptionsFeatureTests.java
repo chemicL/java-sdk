@@ -23,6 +23,8 @@ import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -61,7 +63,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.tools(noopTools())
+			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -102,7 +104,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.tools(noopTools())
+			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -132,7 +134,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.tools(noopTools())
+			.feature(ToolsFeature.of(noopTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
