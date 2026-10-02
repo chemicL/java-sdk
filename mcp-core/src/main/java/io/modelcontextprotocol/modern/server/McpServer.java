@@ -173,7 +173,11 @@ public final class McpServer implements McpRequestManager {
 		Map<String, Object> effectiveParams = paramsMap;
 		if (retry && MRTR_ELIGIBLE_METHODS.contains(request.method())) {
 			Object requestStateRaw = paramsMap.get("requestState");
-			if (requestStateRaw instanceof String sealed) {
+			if (requestStateRaw != null) {
+				// Anything but a sealed string would reach the handler unverified.
+				if (!(requestStateRaw instanceof String sealed)) {
+					return singleError(id, ErrorCodes.INVALID_PARAMS, "requestState must be a string");
+				}
 				effectiveParams = new LinkedHashMap<>(paramsMap);
 				effectiveParams.put("requestState", this.requestStateCodec.open(ctx, sealed));
 			}

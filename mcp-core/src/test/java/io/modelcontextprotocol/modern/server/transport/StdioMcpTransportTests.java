@@ -26,6 +26,7 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
@@ -195,7 +196,29 @@ class StdioMcpTransportTests {
 
 		String line = readLineWithTimeout();
 		Map<String, Object> parsed = this.jsonMapper.readValue(line, Map.class);
-		assertThat(parsed.get("error")).isNotNull();
+		assertThat(parsed.get("id")).isNull();
+		assertThat(((Number) ((Map<?, ?>) parsed.get("error")).get("code")).intValue())
+			.isEqualTo(ErrorCodes.PARSE_ERROR);
+	}
+
+	@Test
+	void invalidEnvelopeProducesInvalidRequestAndTransportKeepsServing() throws Exception {
+		McpRequestManager manager = managerOf((transportContext, request) -> Mono
+			.just(McpInvocation.single(Mono.just(JSONRPCResponse.result(request.id(), Map.of())))));
+		start(manager);
+
+		this.clientOut.write("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":{}}\n"
+			.getBytes(StandardCharsets.UTF_8));
+		this.clientOut.flush();
+
+		Map<String, Object> parsed = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(parsed.get("id")).isNull();
+		assertThat(((Number) ((Map<?, ?>) parsed.get("error")).get("code")).intValue())
+			.isEqualTo(ErrorCodes.INVALID_REQUEST);
+
+		send("tools/list", 7, Map.of("_meta", meta()));
+		Map<String, Object> next = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) next.get("id")).intValue()).isEqualTo(7);
 	}
 
 	@Test

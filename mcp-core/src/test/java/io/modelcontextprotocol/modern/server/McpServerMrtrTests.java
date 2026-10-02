@@ -105,6 +105,42 @@ class McpServerMrtrTests {
 	}
 
 	@Test
+	void nonStringRequestStateIsRejected() {
+		AtomicReference<String> seenRequestState = new AtomicReference<>();
+		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
+			@Override
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ToolsPage.of(List.of()));
+			}
+
+			@Override
+			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
+					String name) {
+				return Mono.just(AsyncFeatureHandler.withInput((c, req) -> {
+					seenRequestState.set(req.requestState());
+					return Mono.just(McpRoundResult.complete(CallToolResult.builder().build()));
+				}));
+			}
+		};
+		McpServer server = McpServer.builder()
+			.serverInfo(SERVER_INFO)
+			.jsonMapper(new GsonMcpJsonMapper())
+			.feature(ToolsFeature.of(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.build();
+
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", metaWithElicitation());
+		params.put("name", "echo");
+		params.put("requestState", 42);
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, params);
+
+		var response = respond(server, request).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
+		assertThat(seenRequestState.get()).isNull();
+	}
+
+	@Test
 	void elicitationWithoutDeclaredCapabilityIsRejected() {
 		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
 			@Override

@@ -24,7 +24,6 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
-import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
@@ -49,11 +48,10 @@ import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
 
 /**
- * A {@link HttpServlet} transport for a modern
- * {@link McpRequestManager}: stateless, POST only, one self-contained request or
- * notification per call. Requests are blocking and served on the container thread, so
- * thread-locals set by servlet filters are visible to sync handlers;
- * {@code subscriptions/listen} is served asynchronously.
+ * A {@link HttpServlet} transport for a modern {@link McpRequestManager}: stateless, POST
+ * only, one self-contained request or notification per call. Requests are blocking and
+ * served on the container thread, so thread-locals set by servlet filters are visible to
+ * sync handlers; {@code subscriptions/listen} is served asynchronously.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -176,9 +174,13 @@ public class HttpServletMcpTransport extends HttpServlet {
 		try {
 			message = JsonRpc.deserializeMessage(this.jsonMapper, body);
 		}
-		catch (IllegalArgumentException | IOException e) {
-			writeJsonError(response, HttpServletResponse.SC_BAD_REQUEST,
-					new JSONRPCError(ErrorCodes.PARSE_ERROR, "Invalid message format"));
+		catch (IOException e) {
+			writeJsonRpcErrorResponse(response, null, new JSONRPCError(ErrorCodes.PARSE_ERROR, "Parse error"));
+			return;
+		}
+		catch (IllegalArgumentException e) {
+			writeJsonRpcErrorResponse(response, null,
+					new JSONRPCError(ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message"));
 			return;
 		}
 
@@ -189,7 +191,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 
 		if (!(message instanceof JSONRPCRequest jsonRpcRequest)) {
-			writeJsonError(response, HttpServletResponse.SC_BAD_REQUEST, new JSONRPCError(ErrorCodes.INVALID_REQUEST,
+			writeJsonRpcErrorResponse(response, null, new JSONRPCError(ErrorCodes.INVALID_REQUEST,
 					"The server accepts either requests or notifications"));
 			return;
 		}
@@ -317,15 +319,6 @@ public class HttpServletMcpTransport extends HttpServlet {
 		};
 	}
 
-	private void writeJsonError(HttpServletResponse response, int status, JSONRPCError error) throws IOException {
-		response.setContentType(APPLICATION_JSON);
-		response.setCharacterEncoding(UTF_8);
-		response.setStatus(status);
-		PrintWriter writer = response.getWriter();
-		writer.write(this.jsonMapper.writeValueAsString(new McpError(error)));
-		writer.flush();
-	}
-
 	private void writeJsonRpcErrorResponse(HttpServletResponse response, Object id, JSONRPCError error)
 			throws IOException {
 		writeSingleResponse(response, JSONRPCResponse.error(id, error));
@@ -379,9 +372,12 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 		String nameHeader = request.getHeader("Mcp-Name");
 		if (nameHeader == null) {
-			return isPlainAscii(expectedName) ? "Missing required header: Mcp-Name" : null;
+			return "Missing required header: Mcp-Name";
 		}
 		String decoded = decodeMcpNameHeader(nameHeader);
+		if (decoded == null) {
+			return "Mcp-Name header has a malformed Base64 value";
+		}
 		if (!expectedName.equals(decoded)) {
 			return "Mcp-Name header does not match request name/uri";
 		}
@@ -410,14 +406,15 @@ public class HttpServletMcpTransport extends HttpServlet {
 		};
 	}
 
-	private static boolean isPlainAscii(String value) {
-		return value.chars().allMatch(c -> c < 128);
-	}
-
 	private static String decodeMcpNameHeader(String value) {
 		if (value.startsWith("=?base64?") && value.endsWith("?=")) {
 			String base64 = value.substring("=?base64?".length(), value.length() - "?=".length());
-			return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
+			try {
+				return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
+			}
+			catch (IllegalArgumentException ex) {
+				return null;
+			}
 		}
 		return value;
 	}

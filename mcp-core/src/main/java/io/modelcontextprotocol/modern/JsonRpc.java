@@ -37,24 +37,35 @@ public final class JsonRpc {
 	/**
 	 * Parses a JSON-RPC message, picking the concrete type from the fields present.
 	 * @throws IOException if {@code jsonText} is not valid JSON
-	 * @throws IllegalArgumentException if it is not a request, notification or response
+	 * @throws IllegalArgumentException if it is not a valid request, notification or
+	 * response
 	 */
 	public static JSONRPCMessage deserializeMessage(McpJsonMapper jsonMapper, String jsonText) throws IOException {
 		logger.debug("Received JSON message: {}", jsonText);
 
 		var map = jsonMapper.readValue(jsonText, MAP_TYPE_REF);
 
+		Class<? extends JSONRPCMessage> type;
 		if (map.containsKey("method") && map.containsKey("id")) {
-			return jsonMapper.convertValue(map, JSONRPCRequest.class);
+			type = JSONRPCRequest.class;
 		}
 		else if (map.containsKey("method") && !map.containsKey("id")) {
-			return jsonMapper.convertValue(map, JSONRPCNotification.class);
+			type = JSONRPCNotification.class;
 		}
 		else if (map.containsKey("result") || map.containsKey("error")) {
-			return jsonMapper.convertValue(map, JSONRPCResponse.class);
+			type = JSONRPCResponse.class;
 		}
-
-		throw new IllegalArgumentException("Cannot deserialize JSONRPCMessage: " + jsonText);
+		else {
+			throw new IllegalArgumentException("Cannot deserialize JSONRPCMessage: " + jsonText);
+		}
+		try {
+			return jsonMapper.convertValue(map, type);
+		}
+		catch (RuntimeException ex) {
+			// Mappers report envelope violations (e.g. a null id) with their own
+			// exception types; normalize so callers can answer with Invalid Request.
+			throw new IllegalArgumentException("Invalid " + type.getSimpleName() + ": " + ex.getMessage(), ex);
+		}
 	}
 
 	public interface JSONRPCMessage {
@@ -116,6 +127,7 @@ public final class JsonRpc {
 
 	/**
 	 * A response to a request, carrying exactly one of {@code result} or {@code error}.
+	 * An error response has no {@code id} when the request's id could not be determined.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)
@@ -127,10 +139,10 @@ public final class JsonRpc {
 
 		public JSONRPCResponse {
 			Assert.hasText(jsonrpc, "jsonrpc must not be empty");
-			Assert.notNull(id, "MCP responses MUST include an ID - null IDs are not allowed");
-			Assert.isTrue(id instanceof String || id instanceof Integer || id instanceof Long,
-					"MCP responses MUST have an ID that is either a string or integer");
 			Assert.isTrue((result != null) ^ (error != null), "MCP responses MUST either have a result or error");
+			Assert.isTrue(id != null || error != null, "MCP result responses MUST include an ID");
+			Assert.isTrue(id == null || id instanceof String || id instanceof Integer || id instanceof Long,
+					"MCP responses MUST have an ID that is either a string or integer");
 		}
 
 		public static JSONRPCResponse result(Object id, Object result) {

@@ -10,7 +10,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,6 +19,8 @@ import io.modelcontextprotocol.modern.JsonRpc;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
@@ -112,8 +113,16 @@ public class StdioMcpTransport {
 		try (BufferedReader reader = new BufferedReader(new InputStreamReader(this.in, StandardCharsets.UTF_8))) {
 			String line;
 			while (!this.closing && (line = reader.readLine()) != null) {
-				if (!line.isBlank()) {
+				if (line.isBlank()) {
+					continue;
+				}
+				// One bad message must never end the read loop - it would take the whole
+				// server down.
+				try {
 					handleLine(line);
+				}
+				catch (RuntimeException ex) {
+					logger.warn("Failed to handle stdio message", ex);
 				}
 			}
 		}
@@ -130,8 +139,13 @@ public class StdioMcpTransport {
 		try {
 			message = JsonRpc.deserializeMessage(this.jsonMapper, line);
 		}
-		catch (IllegalArgumentException | IOException e) {
-			emitParseError();
+		catch (IOException e) {
+			emit(JSONRPCResponse.error(null, new JSONRPCError(McpSchema.ErrorCodes.PARSE_ERROR, "Parse error")));
+			return;
+		}
+		catch (IllegalArgumentException e) {
+			emit(JSONRPCResponse.error(null,
+					new JSONRPCError(McpSchema.ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message")));
 			return;
 		}
 
@@ -189,23 +203,6 @@ public class StdioMcpTransport {
 		}
 		if (result.isFailure()) {
 			logger.warn("Failed to enqueue outbound message: {}", result);
-		}
-	}
-
-	private void emitParseError() {
-		Map<String, Object> error = new LinkedHashMap<>();
-		error.put("code", McpSchema.ErrorCodes.PARSE_ERROR);
-		error.put("message", "Invalid message format");
-		Map<String, Object> body = new LinkedHashMap<>();
-		body.put("jsonrpc", "2.0");
-		body.put("id", null);
-		body.put("error", error);
-		try {
-			String json = this.jsonMapper.writeValueAsString(body);
-			this.writerScheduler.schedule(() -> writeRaw(json));
-		}
-		catch (IOException e) {
-			logger.warn("Failed to serialize parse error", e);
 		}
 	}
 

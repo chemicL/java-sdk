@@ -235,6 +235,64 @@ class HttpServletMcpTransportIntegrationTests {
 	}
 
 	@Test
+	void malformedBase64McpNameIsRejected() throws Exception {
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
+		params.put("name", "echo");
+		HttpRequest request = post("tools/call", params).header("Mcp-Name", "=?base64?not*base64?=").build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
+	void missingMcpNameIsRejectedForNonAsciiName() throws Exception {
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
+		params.put("name", "café");
+		HttpRequest request = post("tools/call", params).build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
+	void invalidJsonIsAnsweredWithJsonRpcParseError() throws Exception {
+		HttpResponse<String> response = HttpClient.newHttpClient()
+			.send(rawPost("not json at all"), HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		Map<String, Object> parsed = JSON_MAPPER.readValue(response.body(), new TypeRef<Map<String, Object>>() {
+		});
+		assertThat(parsed).containsOnlyKeys("jsonrpc", "error");
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.PARSE_ERROR);
+	}
+
+	@Test
+	void nullIdIsAnsweredWithInvalidRequest() throws Exception {
+		HttpResponse<String> response = HttpClient.newHttpClient()
+			.send(rawPost("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":{}}"),
+					HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		Map<String, Object> parsed = JSON_MAPPER.readValue(response.body(), new TypeRef<Map<String, Object>>() {
+		});
+		assertThat(parsed).containsOnlyKeys("jsonrpc", "error");
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.INVALID_REQUEST);
+	}
+
+	private static HttpRequest rawPost(String body) {
+		return HttpRequest.newBuilder()
+			.uri(URI.create("http://localhost:" + PORT + ENDPOINT))
+			.header("Content-Type", "application/json")
+			.header("Accept", "application/json, text/event-stream")
+			.POST(HttpRequest.BodyPublishers.ofString(body))
+			.build();
+	}
+
+	@Test
 	void disallowedOriginIsRejected() throws Exception {
 		HttpRequest request = post("server/discover", Map.of("_meta", meta()))
 			.header("Origin", "http://evil.example.com")
