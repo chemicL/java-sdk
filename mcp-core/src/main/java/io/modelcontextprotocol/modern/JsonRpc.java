@@ -5,13 +5,12 @@
 package io.modelcontextprotocol.modern;
 
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,9 +25,6 @@ public final class JsonRpc {
 
 	private static final Logger logger = LoggerFactory.getLogger(JsonRpc.class);
 
-	private static final TypeRef<HashMap<String, Object>> MAP_TYPE_REF = new TypeRef<>() {
-	};
-
 	public static final String JSONRPC_VERSION = "2.0";
 
 	private JsonRpc() {
@@ -37,13 +33,17 @@ public final class JsonRpc {
 	/**
 	 * Parses a JSON-RPC message, picking the concrete type from the fields present.
 	 * @throws IOException if {@code jsonText} is not valid JSON
-	 * @throws IllegalArgumentException if it is not a valid request, notification or
+	 * @throws InvalidMessageException if it is not a valid request, notification or
 	 * response
 	 */
 	public static JSONRPCMessage deserializeMessage(McpJsonMapper jsonMapper, String jsonText) throws IOException {
 		logger.debug("Received JSON message: {}", jsonText);
 
-		var map = jsonMapper.readValue(jsonText, MAP_TYPE_REF);
+		// Read untyped first: valid JSON that is not an object (null, an array, a
+		// scalar) is an Invalid Request, not a Parse error.
+		if (!(jsonMapper.readValue(jsonText, Object.class) instanceof Map<?, ?> map)) {
+			throw new InvalidMessageException("A JSON-RPC message must be a JSON object", null, null);
+		}
 
 		Class<? extends JSONRPCMessage> type;
 		if (map.containsKey("method") && map.containsKey("id")) {
@@ -56,7 +56,7 @@ public final class JsonRpc {
 			type = JSONRPCResponse.class;
 		}
 		else {
-			throw new IllegalArgumentException("Cannot deserialize JSONRPCMessage: " + jsonText);
+			throw new InvalidMessageException("Cannot deserialize JSONRPCMessage: " + jsonText, null, null);
 		}
 		try {
 			return jsonMapper.convertValue(map, type);
@@ -64,8 +64,37 @@ public final class JsonRpc {
 		catch (RuntimeException ex) {
 			// Mappers report envelope violations (e.g. a null id) with their own
 			// exception types; normalize so callers can answer with Invalid Request.
-			throw new IllegalArgumentException("Invalid " + type.getSimpleName() + ": " + ex.getMessage(), ex);
+			// Only a request's id is kept: the error answers that request.
+			Object id = type == JSONRPCRequest.class ? map.get("id") : null;
+			throw new InvalidMessageException("Invalid " + type.getSimpleName() + ": " + ex.getMessage(),
+					isValidId(id) ? id : null, ex);
 		}
+	}
+
+	private static boolean isValidId(Object id) {
+		return id instanceof String || id instanceof Integer || id instanceof Long;
+	}
+
+	/**
+	 * Thrown when JSON is not a valid JSON-RPC message.
+	 */
+	public static final class InvalidMessageException extends IllegalArgumentException {
+
+		private final transient Object id;
+
+		InvalidMessageException(String message, Object id, Throwable cause) {
+			super(message, cause);
+			this.id = id;
+		}
+
+		/**
+		 * The id of the invalid request, or {@code null} if it has none or it is not a
+		 * valid id.
+		 */
+		public Object id() {
+			return this.id;
+		}
+
 	}
 
 	public interface JSONRPCMessage {

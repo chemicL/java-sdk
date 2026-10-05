@@ -209,8 +209,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 			writeError(response, JSONRPCResponse.error(null, new JSONRPCError(ErrorCodes.PARSE_ERROR, "Parse error")));
 			return;
 		}
-		catch (IllegalArgumentException e) {
-			writeError(response, JSONRPCResponse.error(null,
+		catch (JsonRpc.InvalidMessageException e) {
+			writeError(response, JSONRPCResponse.error(e.id(),
 					new JSONRPCError(ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message")));
 			return;
 		}

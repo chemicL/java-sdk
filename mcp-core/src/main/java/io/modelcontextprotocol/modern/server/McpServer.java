@@ -90,7 +90,8 @@ public final class McpServer implements McpRequestManager {
 
 	/**
 	 * Ends every active {@code subscriptions/listen} stream with a graceful
-	 * {@code complete} result. A no-op if no {@link McpChangeFeed} was registered.
+	 * {@code complete} result; streams opened afterwards end right after their
+	 * acknowledgment. A no-op if no {@link McpChangeFeed} was registered.
 	 */
 	public void closeGracefully() {
 		if (this.subscriptionsFeature != null) {
