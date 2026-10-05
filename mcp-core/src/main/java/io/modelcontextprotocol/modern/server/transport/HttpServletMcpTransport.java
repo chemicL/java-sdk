@@ -300,10 +300,22 @@ public class HttpServletMcpTransport extends HttpServlet {
 		// holds the writer, the backlog waits in the stream's own buffer upstream.
 		subscription.update(frames(streaming.messages()).publishOn(Schedulers.boundedElastic())
 			.doOnNext(frame -> writeFrame(writer, frame))
-			.subscribe(null, error -> {
-				logger.debug("Listen stream ended early: {}", error.getMessage());
-				asyncContext.complete();
-			}, asyncContext::complete));
+			// A disconnect disposes the subscription while a write may be failing
+			// because of it. A cancelled subscriber drops errors before any error
+			// consumer runs; onErrorComplete absorbs them even after cancellation.
+			.doOnError(error -> logger.debug("Listen stream ended early: {}", error.getMessage()))
+			.onErrorComplete()
+			.subscribe(null, null, () -> complete(asyncContext)));
+	}
+
+	private static void complete(AsyncContext asyncContext) {
+		// A completion consumer that throws gets its exception dropped as well.
+		try {
+			asyncContext.complete();
+		}
+		catch (RuntimeException ex) {
+			logger.debug("Failed to complete the listen stream: {}", ex.getMessage());
+		}
 	}
 
 	private Flux<String> frames(Flux<JSONRPCMessage> messages) {

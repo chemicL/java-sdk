@@ -226,7 +226,12 @@ public class StdioMcpTransport {
 	private void dispatch(JSONRPCRequest request) {
 		Object key = keyOf(request.id());
 		Flux<JSONRPCMessage> flux = this.requestManager.handle(McpTransportContext.EMPTY, request)
-			.flatMapMany(StdioMcpTransport::messages);
+			.flatMapMany(StdioMcpTransport::messages)
+			// Cancellation and shutdown dispose the subscription while an error may be
+			// on its way. A cancelled subscriber drops errors before any error consumer
+			// runs; onErrorComplete absorbs them even after cancellation.
+			.doOnError(err -> logger.warn("Unhandled error dispatching request {}", key, err))
+			.onErrorComplete();
 
 		// Registered before subscribing: a request that completes synchronously removes
 		// its own entry in doFinally, which must not run before the put.
@@ -237,7 +242,7 @@ public class StdioMcpTransport {
 		entry.subscription().update(flux.doFinally(signal -> {
 			this.inFlight.remove(key, entry);
 			done.tryEmitEmpty();
-		}).subscribe(this::emit, err -> logger.warn("Unhandled error dispatching request {}", key, err)));
+		}).subscribe(this::emit));
 	}
 
 	// stdio has no status channel: every response is just its messages.
@@ -270,7 +275,9 @@ public class StdioMcpTransport {
 		try {
 			writeRaw(this.jsonMapper.writeValueAsString(message));
 		}
-		catch (IOException e) {
+		catch (IOException | RuntimeException e) {
+			// Anything escaping would end the writer, and all output with it, as a
+			// dropped error.
 			logger.warn("Failed to serialize outbound message", e);
 		}
 	}
