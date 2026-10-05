@@ -4,23 +4,22 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.Optional;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpSchema.GetPromptOutcome;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
-import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.McpSchema.ListPromptsResult;
 import io.modelcontextprotocol.modern.McpSchema.PaginatedRequest;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
-import io.modelcontextprotocol.modern.server.McpHandler;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -50,8 +49,8 @@ public final class PromptsFeature implements McpFeature {
 	}
 
 	/** Uses the default JSON mapper and no caching. */
-	public static PromptsFeature of(McpAsyncPromptRepository repository) {
-		return of(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
+	public static PromptsFeature ofAsync(McpAsyncPromptRepository repository) {
+		return ofAsync(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
 	}
 
 	/** Uses the default JSON mapper and no caching. */
@@ -59,8 +58,8 @@ public final class PromptsFeature implements McpFeature {
 		return ofSync(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
 	}
 
-	public static PromptsFeature of(McpAsyncPromptRepository repository, McpJsonMapper jsonMapper, long defaultTtlMs,
-			CacheScope defaultCacheScope) {
+	public static PromptsFeature ofAsync(McpAsyncPromptRepository repository, McpJsonMapper jsonMapper,
+			long defaultTtlMs, CacheScope defaultCacheScope) {
 		Assert.notNull(repository, "repository must not be null");
 		return new PromptsFeature(repository, jsonMapper, defaultTtlMs, defaultCacheScope);
 	}
@@ -68,7 +67,7 @@ public final class PromptsFeature implements McpFeature {
 	public static PromptsFeature ofSync(McpSyncPromptRepository repository, McpJsonMapper jsonMapper, long defaultTtlMs,
 			CacheScope defaultCacheScope) {
 		Assert.notNull(repository, "repository must not be null");
-		return of(adapt(repository), jsonMapper, defaultTtlMs, defaultCacheScope);
+		return ofAsync(adapt(repository), jsonMapper, defaultTtlMs, defaultCacheScope);
 	}
 
 	@Override
@@ -77,8 +76,20 @@ public final class PromptsFeature implements McpFeature {
 	}
 
 	@Override
-	public Mono<McpHandler> resolve(McpRequestContext ctx) {
-		return McpSchema.METHOD_PROMPTS_LIST.equals(ctx.method()) ? Mono.just(listHandler()) : getHandler(ctx);
+	public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
+		if (McpSchema.METHOD_PROMPTS_LIST.equals(ctx.method())) {
+			Optional<PaginatedRequest> request = Params.decode(this.jsonMapper, params, PaginatedRequest.class);
+			if (request.isEmpty()) {
+				return Params.malformed(PaginatedRequest.class);
+			}
+			return this.repository.list(ctx, request.get().cursor())
+				.map(page -> McpAsyncResponse.result(toListResult(page)));
+		}
+		Optional<GetPromptRequest> request = Params.decode(this.jsonMapper, params, GetPromptRequest.class);
+		if (request.isEmpty()) {
+			return Params.malformed(GetPromptRequest.class);
+		}
+		return this.repository.get(ctx, request.get());
 	}
 
 	@Override
@@ -89,25 +100,6 @@ public final class PromptsFeature implements McpFeature {
 	@Override
 	public Set<String> inputRequiredMethods() {
 		return Set.of(McpSchema.METHOD_PROMPTS_GET);
-	}
-
-	private McpHandler listHandler() {
-		return (ctx, params) -> {
-			PaginatedRequest request = params == null ? new PaginatedRequest(null, null)
-					: FeatureHandlers.convertParams(this.jsonMapper, params, PaginatedRequest.class);
-			return this.repository.list(ctx, request.cursor()).map(this::toListResult);
-		};
-	}
-
-	private Mono<McpHandler> getHandler(McpRequestContext ctx) {
-		String name = ctx.primitiveName();
-		if (name == null || name.isBlank()) {
-			throw McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.name is required").build();
-		}
-		return this.repository.resolve(ctx, name)
-			.map(handler -> FeatureHandlers.toMcpHandler(handler, GetPromptRequest.class, this.jsonMapper))
-			.switchIfEmpty(
-					Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS).message("Unknown prompt: " + name).build()));
 	}
 
 	private Result toListResult(PromptsPage page) {
@@ -122,13 +114,12 @@ public final class PromptsFeature implements McpFeature {
 		return new McpAsyncPromptRepository() {
 			@Override
 			public Mono<PromptsPage> list(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.toAsync(ctx, () -> repository.list(ctx, cursor));
+				return SyncAdapters.call(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
-			public Mono<AsyncFeatureHandler<GetPromptRequest, GetPromptResult>> resolve(McpRequestContext ctx,
-					String name) {
-				return SyncAdapters.toAsync(ctx, () -> repository.resolve(ctx, name)).map(SyncAdapters::toAsync);
+			public Mono<McpAsyncResponse<GetPromptOutcome>> get(McpRequestContext ctx, GetPromptRequest request) {
+				return SyncAdapters.respond(ctx, () -> repository.get(ctx, request));
 			}
 		};
 	}

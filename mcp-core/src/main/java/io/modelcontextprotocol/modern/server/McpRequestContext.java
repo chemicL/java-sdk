@@ -7,11 +7,8 @@ package io.modelcontextprotocol.modern.server;
 import java.util.Map;
 
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
-import io.modelcontextprotocol.modern.McpSchema.MissingRequiredClientCapabilityData;
 import io.modelcontextprotocol.util.Assert;
 
 /**
@@ -97,7 +94,7 @@ public final class McpRequestContext {
 	/**
 	 * The {@code name} (for tools/prompts) or {@code uri} (for resources) the request
 	 * targets, or {@code null} if the method has no such primitive. Used by
-	 * {@code RequestStateCodec} to bind sealed {@code requestState} to the primitive.
+	 * {@link RequestStateCodec} to bind sealed {@code requestState} to the primitive.
 	 */
 	public String primitiveName() {
 		return this.primitiveName;
@@ -124,27 +121,11 @@ public final class McpRequestContext {
 
 	/**
 	 * Whether the transport resolved this request through
-	 * {@link McpRequestManager#resolveBlocking}, so sync code may run on the calling
+	 * {@link McpRequestManager#handleBlocking}, so sync code may run on the calling
 	 * thread.
 	 */
 	public boolean isBlocking() {
 		return this.blocking;
-	}
-
-	/**
-	 * Throw {@code -32021} ({@code MissingRequiredClientCapability}) unless
-	 * {@code present} is {@code true}.
-	 * @param present whether the client declared the capability this handler needs
-	 * @param required the capabilities object describing what was missing, echoed back in
-	 * the error's {@code data.requiredCapabilities}
-	 */
-	public void requireCapability(boolean present, ClientCapabilities required) {
-		if (!present) {
-			throw McpError.builder(ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY)
-				.message("Missing required client capability")
-				.data(new MissingRequiredClientCapabilityData(required))
-				.build();
-		}
 	}
 
 }

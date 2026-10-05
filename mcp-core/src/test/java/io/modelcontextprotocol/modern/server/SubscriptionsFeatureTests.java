@@ -35,7 +35,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -44,8 +44,7 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true, "promptsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 7, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.block();
+		var invocation = (McpTransportResponse.Streaming) server.handle(McpTransportContext.EMPTY, request).block();
 
 		// The feed has no buffered replay, so emit only after the listen stream has
 		// actually subscribed - otherwise the change is dropped before anyone is
@@ -76,7 +75,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -85,8 +84,7 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 1, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.block();
+		var invocation = (McpTransportResponse.Streaming) server.handle(McpTransportContext.EMPTY, request).block();
 
 		StepVerifier.create(invocation.messages())
 			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
@@ -106,7 +104,7 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -115,14 +113,72 @@ class SubscriptionsFeatureTests {
 		params.put("notifications", Map.of("toolsListChanged", true));
 		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", 42, params);
 
-		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.block();
+		var invocation = (McpTransportResponse.Streaming) server.handle(McpTransportContext.EMPTY, request).block();
 		server.closeGracefully();
 
 		StepVerifier.create(invocation.messages()).assertNext(msg -> {
 			JSONRPCNotification ack = (JSONRPCNotification) msg;
 			assertThat(subscriptionIdOf(ack)).isEqualTo(42L);
 		}).assertNext(msg -> assertThat(msg).isInstanceOf(JSONRPCResponse.class)).verifyComplete();
+	}
+
+	@Test
+	void changeEmittedWithNoListenerIsDropped() {
+		SinkChangeFeed feed = McpChangeFeed.sink();
+		McpServer server = toolsServer(feed);
+
+		feed.emit(new ServerChange.ToolsListChanged());
+
+		StepVerifier.create(listen(server, 1).messages())
+			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
+				.equals(McpSchema.METHOD_NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED))
+			.then(server::closeGracefully)
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
+			.verifyComplete();
+	}
+
+	@Test
+	void listenAfterEarlierListenEndedReceivesChanges() {
+		SinkChangeFeed feed = McpChangeFeed.sink();
+		McpServer server = toolsServer(feed);
+
+		// Receiving a change proves the first stream subscribed to the feed before it
+		// goes away.
+		StepVerifier.create(listen(server, 1).messages())
+			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
+				.equals(McpSchema.METHOD_NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED))
+			.then(() -> feed.emit(new ServerChange.ToolsListChanged()))
+			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
+				.equals(McpSchema.METHOD_NOTIFICATION_TOOLS_LIST_CHANGED))
+			.thenCancel()
+			.verify();
+
+		StepVerifier.create(listen(server, 2).messages())
+			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
+				.equals(McpSchema.METHOD_NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED))
+			.then(() -> feed.emit(new ServerChange.ToolsListChanged()))
+			.expectNextMatches(msg -> ((JSONRPCNotification) msg).method()
+				.equals(McpSchema.METHOD_NOTIFICATION_TOOLS_LIST_CHANGED))
+			.then(server::closeGracefully)
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
+			.verifyComplete();
+	}
+
+	private static McpServer toolsServer(McpChangeFeed feed) {
+		return McpServer.builder()
+			.serverInfo(SERVER_INFO)
+			.jsonMapper(new GsonMcpJsonMapper())
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.subscriptions(feed)
+			.build();
+	}
+
+	private static McpTransportResponse.Streaming listen(McpServer server, int id) {
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
+		params.put("notifications", Map.of("toolsListChanged", true));
+		JSONRPCRequest request = new JSONRPCRequest("subscriptions/listen", id, params);
+		return (McpTransportResponse.Streaming) server.handle(McpTransportContext.EMPTY, request).block();
 	}
 
 	@SuppressWarnings("unchecked")

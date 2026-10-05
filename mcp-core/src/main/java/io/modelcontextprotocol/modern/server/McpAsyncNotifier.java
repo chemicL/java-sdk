@@ -7,7 +7,8 @@ package io.modelcontextprotocol.modern.server;
 import reactor.core.publisher.Mono;
 
 /**
- * Emits request-scoped notifications from inside a {@link McpHandler.Streaming}.
+ * Emits request-scoped notifications from inside the body of a streaming
+ * {@link McpAsyncResponse}.
  *
  * @author Dariusz Jędrzejczyk
  */

@@ -26,9 +26,13 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
-import io.modelcontextprotocol.modern.server.McpInvocation;
+import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
+import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +40,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -85,17 +91,17 @@ class StdioMcpTransportTests {
 	}
 
 	private static McpRequestManager managerOf(
-			BiFunction<McpTransportContext, JSONRPCRequest, Mono<McpInvocation>> resolveFn) {
+			BiFunction<McpTransportContext, JSONRPCRequest, Mono<McpTransportResponse>> handleFn) {
 		return new McpRequestManager() {
 			@Override
-			public Mono<McpInvocation> resolveBlocking(McpTransportContext transportContext, JSONRPCRequest request) {
-				throw new AssertionError("stdio must never resolve for a blocking caller");
+			public Mono<McpTransportResponse> handleBlocking(McpTransportContext transportContext,
+					JSONRPCRequest request) {
+				throw new AssertionError("stdio must never handle requests for a blocking caller");
 			}
 
 			@Override
-			public Mono<McpInvocation> resolveNonBlocking(McpTransportContext transportContext,
-					JSONRPCRequest request) {
-				return resolveFn.apply(transportContext, request);
+			public Mono<McpTransportResponse> handle(McpTransportContext transportContext, JSONRPCRequest request) {
+				return handleFn.apply(transportContext, request);
 			}
 
 			@Override
@@ -120,7 +126,7 @@ class StdioMcpTransportTests {
 				}
 				return JSONRPCResponse.result(request.id(), Map.of("resultType", "complete", "content", List.of()));
 			});
-			return Mono.just(McpInvocation.single(response.subscribeOn(Schedulers.boundedElastic())));
+			return response.subscribeOn(Schedulers.boundedElastic()).map(McpTransportResponse::result);
 		});
 
 		start(manager);
@@ -149,7 +155,7 @@ class StdioMcpTransportTests {
 	@Test
 	void streamingRequestWritesNotificationsBeforeResponse() throws Exception {
 		McpRequestManager manager = managerOf((transportContext,
-				request) -> Mono.just(McpInvocation.streaming(Flux.just(
+				request) -> Mono.just(McpTransportResponse.streaming(Flux.just(
 						(JSONRPCMessage) new JSONRPCNotification("notifications/progress", Map.of("progress", 1.0)),
 						JSONRPCResponse.result(request.id(), Map.of("resultType", "complete"))))));
 
@@ -169,8 +175,7 @@ class StdioMcpTransportTests {
 	void cancelledNotificationStopsOutputForThatRequest() throws Exception {
 		AtomicReference<Boolean> sawCancel = new AtomicReference<>(false);
 		McpRequestManager manager = managerOf((transportContext, request) -> {
-			Mono<JSONRPCResponse> response = Mono.<JSONRPCResponse>never().doOnCancel(() -> sawCancel.set(true));
-			return Mono.just(McpInvocation.single(response));
+			return Mono.<McpTransportResponse>never().doOnCancel(() -> sawCancel.set(true));
 		});
 		start(manager);
 
@@ -188,7 +193,7 @@ class StdioMcpTransportTests {
 	@Test
 	void invalidJsonProducesParseError() throws Exception {
 		McpRequestManager manager = managerOf((transportContext, request) -> Mono
-			.just(McpInvocation.single(Mono.just(JSONRPCResponse.result(request.id(), Map.of())))));
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
 		start(manager);
 
 		this.clientOut.write("not json at all\n".getBytes(StandardCharsets.UTF_8));
@@ -204,7 +209,7 @@ class StdioMcpTransportTests {
 	@Test
 	void invalidEnvelopeProducesInvalidRequestAndTransportKeepsServing() throws Exception {
 		McpRequestManager manager = managerOf((transportContext, request) -> Mono
-			.just(McpInvocation.single(Mono.just(JSONRPCResponse.result(request.id(), Map.of())))));
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
 		start(manager);
 
 		this.clientOut.write("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":{}}\n"
@@ -222,9 +227,29 @@ class StdioMcpTransportTests {
 	}
 
 	@Test
+	void closeGracefullyEndsListenStreamsWithCompleteResult() throws Exception {
+		McpServer server = McpServer.builder()
+			.serverInfo(SERVER_INFO)
+			.jsonMapper(this.jsonMapper)
+			.feature(ToolsFeature.ofAsync(emptyTools(), this.jsonMapper, 0L, CacheScope.PRIVATE))
+			.subscriptions(McpChangeFeed.sink())
+			.build();
+		start(server);
+
+		send("subscriptions/listen", 3, Map.of("_meta", meta(), "notifications", Map.of("toolsListChanged", true)));
+		assertThat(readLineWithTimeout()).contains("notifications/subscriptions/acknowledged");
+
+		this.transport.closeGracefully().block(Duration.ofSeconds(5));
+
+		Map<String, Object> closing = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) closing.get("id")).intValue()).isEqualTo(3);
+		assertThat(closing.get("result")).isNotNull();
+	}
+
+	@Test
 	void closeGracefullyCompletesTheStartMono() throws Exception {
 		McpRequestManager manager = managerOf((transportContext, request) -> Mono
-			.just(McpInvocation.single(Mono.just(JSONRPCResponse.result(request.id(), Map.of())))));
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
 		this.clientOut = new PipedOutputStream();
 		this.serverIn = new PipedInputStream(this.clientOut);
 		PipedInputStream clientIn = new PipedInputStream();

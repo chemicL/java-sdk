@@ -4,14 +4,15 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpException;
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
-import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import reactor.core.publisher.Mono;
 
 /**
- * User-implemented catalogue of tools. There is no built-in map: {@link #resolve}
- * decides, per call, which handler answers a given tool name.
+ * User-implemented catalogue of tools.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -24,10 +25,9 @@ public interface McpAsyncToolRepository {
 	Mono<ToolsPage> list(McpRequestContext ctx, String cursor);
 
 	/**
-	 * Resolve the handler for {@code name}.
-	 * @return the handler, or {@link Mono#empty()} if no such tool exists (answered as
-	 * {@code -32602})
+	 * Answer a {@code tools/call}. An unknown tool is an
+	 * {@link McpException#invalidParams(String) invalid-params error}.
 	 */
-	Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx, String name);
+	Mono<McpAsyncResponse<CallToolOutcome>> call(McpRequestContext ctx, CallToolRequest request);
 
 }

@@ -4,6 +4,8 @@
 
 package io.modelcontextprotocol.modern.server;
 
+import java.util.Optional;
+
 /**
  * Seals and opens MRTR {@code requestState}. {@code McpServer} opens it on every retry,
  * so handlers only see verified plaintext state.
@@ -21,8 +23,8 @@ public interface RequestStateCodec {
 	/**
 	 * Opens a previously sealed value, verifying it was produced for this principal,
 	 * method and primitive and has not expired.
-	 * @throws McpError ({@code -32602}) if verification fails
+	 * @return the state, or empty if verification fails
 	 */
-	String open(McpRequestContext ctx, String sealed);
+	Optional<String> open(McpRequestContext ctx, String sealed);
 
 }

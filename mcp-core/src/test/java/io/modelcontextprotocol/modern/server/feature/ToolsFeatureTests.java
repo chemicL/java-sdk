@@ -16,8 +16,10 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
@@ -25,10 +27,12 @@ import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpFeature;
-import io.modelcontextprotocol.modern.server.McpInvocation;
+import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
-import io.modelcontextprotocol.modern.server.McpRoundResult;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.McpSyncResponse;
+import io.modelcontextprotocol.modern.server.ModernTestFixtures;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import io.modelcontextprotocol.util.ToolsUtils;
 import org.junit.jupiter.api.Test;
@@ -47,7 +51,7 @@ class ToolsFeatureTests {
 	private static final Tool ECHO_TOOL = Tool.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA).build();
 
 	private static McpFeature tools(McpAsyncToolRepository repository) {
-		return ToolsFeature.of(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
+		return ToolsFeature.ofAsync(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
 	}
 
 	private static McpFeature tools(McpSyncToolRepository repository) {
@@ -71,18 +75,8 @@ class ToolsFeatureTests {
 
 	@Test
 	void malformedArgumentsAreInvalidParams() {
-		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
-			@Override
-			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
-				return Mono.just(ToolsPage.of(List.of(ECHO_TOOL)));
-			}
-
-			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
-					String name) {
-				return Mono.just(AsyncFeatureHandler.of((c, req) -> Mono.just(CallToolResult.builder().build())));
-			}
-		};
+		McpAsyncToolRepository repo = ModernTestFixtures
+			.tools((ctx, req) -> Mono.just(McpAsyncResponse.result(CallToolResult.builder().build())));
 		McpServer server = baseBuilder().feature(tools(repo)).build();
 		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
 				Map.of("_meta", meta(), "name", "echo", "arguments", "not-an-object"));
@@ -95,7 +89,7 @@ class ToolsFeatureTests {
 	@Test
 	void negativeTtlIsRejected() {
 		assertThatIllegalArgumentException()
-			.isThrownBy(() -> ToolsFeature.of(emptyTools(), new GsonMcpJsonMapper(), -1L, CacheScope.PRIVATE));
+			.isThrownBy(() -> ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), -1L, CacheScope.PRIVATE));
 		assertThatIllegalArgumentException().isThrownBy(() -> new ToolsPage(List.of(), null, -1L, null));
 	}
 
@@ -129,11 +123,9 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
-				return SyncFeatureHandler.of((c, req) -> {
-					handlerThread.set(Thread.currentThread().getName());
-					return greeting(principal.apply(c));
-				});
+			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
+				handlerThread.set(Thread.currentThread().getName());
+				return McpSyncResponse.result(greeting(principal.apply(ctx)));
 			}
 		};
 	}
@@ -150,23 +142,24 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
-				return SyncFeatureHandler.streaming((c, req, notifier) -> {
+			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
+				return McpSyncResponse.streaming(notifier -> {
 					handlerThread.set(Thread.currentThread().getName());
 					notifier.progress(1.0, 1.0, "greeting");
 					deliveredWhenProgressReturned.set(delivered.size());
-					return greeting(principal.apply(c));
+					return greeting(principal.apply(ctx));
 				});
 			}
 		};
 	}
 
-	private static JSONRPCResponse callSingle(Mono<McpInvocation> invocation) {
-		return invocation.flatMap(inv -> ((McpInvocation.Single) inv).response()).block();
+	private static JSONRPCResponse callSingle(Mono<McpTransportResponse> invocation) {
+		return invocation.map(inv -> ((McpTransportResponse.Result) inv).response()).block();
 	}
 
-	private static List<JSONRPCMessage> callStreaming(Mono<McpInvocation> invocation, List<JSONRPCMessage> delivered) {
-		((McpInvocation.Streaming) invocation.block()).messages().doOnNext(delivered::add).blockLast();
+	private static List<JSONRPCMessage> callStreaming(Mono<McpTransportResponse> invocation,
+			List<JSONRPCMessage> delivered) {
+		((McpTransportResponse.Streaming) invocation.block()).messages().doOnNext(delivered::add).blockLast();
 		return delivered;
 	}
 
@@ -179,7 +172,7 @@ class ToolsFeatureTests {
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
 		try {
-			response = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, callEcho()));
+			response = callSingle(server.handleBlocking(McpTransportContext.EMPTY, callEcho()));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -201,7 +194,7 @@ class ToolsFeatureTests {
 
 		PRINCIPAL.set("alice");
 		try {
-			callStreaming(server.resolveBlocking(McpTransportContext.EMPTY, callEcho()), delivered);
+			callStreaming(server.handleBlocking(McpTransportContext.EMPTY, callEcho()), delivered);
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -225,8 +218,8 @@ class ToolsFeatureTests {
 			}
 
 			@Override
-			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
-				return null;
+			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
+				throw McpException.invalidParams("Unknown tool: " + request.name());
 			}
 		};
 		McpServer server = baseBuilder().feature(tools(repo)).build();
@@ -236,9 +229,9 @@ class ToolsFeatureTests {
 		JSONRPCResponse asAdmin;
 		JSONRPCResponse asAnonymous;
 		try {
-			asAdmin = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
+			asAdmin = callSingle(server.handleBlocking(McpTransportContext.EMPTY, listTools));
 			PRINCIPAL.remove();
-			asAnonymous = callSingle(server.resolveBlocking(McpTransportContext.EMPTY, listTools));
+			asAnonymous = callSingle(server.handleBlocking(McpTransportContext.EMPTY, listTools));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -257,7 +250,7 @@ class ToolsFeatureTests {
 		PRINCIPAL.set("alice");
 		JSONRPCResponse response;
 		try {
-			response = callSingle(server.resolveNonBlocking(McpTransportContext.EMPTY, callEcho()));
+			response = callSingle(server.handle(McpTransportContext.EMPTY, callEcho()));
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -277,7 +270,7 @@ class ToolsFeatureTests {
 
 		PRINCIPAL.set("alice");
 		try {
-			callStreaming(server.resolveNonBlocking(McpTransportContext.EMPTY, callEcho()), delivered);
+			callStreaming(server.handle(McpTransportContext.EMPTY, callEcho()), delivered);
 		}
 		finally {
 			PRINCIPAL.remove();
@@ -296,22 +289,10 @@ class ToolsFeatureTests {
 			.build();
 		McpTransportContext transportContext = McpTransportContext.create(Map.of("principal", "alice"));
 
-		JSONRPCResponse response = callSingle(server.resolveNonBlocking(transportContext, callEcho()));
+		JSONRPCResponse response = callSingle(server.handle(transportContext, callEcho()));
 
 		assertThat(handlerThread.get()).startsWith("boundedElastic-");
 		assertThat(greetingText(response)).isEqualTo("hello alice");
-	}
-
-	@Test
-	void withInputHandlerCanAnswerInputRequired() {
-		McpSchema.InputRequiredResult inputRequired = McpSchema.InputRequiredResult.builder().requestState("s").build();
-		AsyncFeatureHandler<CallToolRequest, CallToolResult> handler = AsyncFeatureHandler
-			.withInput((ctx, req) -> Mono.just(McpRoundResult.inputRequired(inputRequired)));
-
-		StepVerifier.create(handler.handle(null, null)).assertNext(round -> {
-			assertThat(round).isInstanceOf(McpRoundResult.InputRequired.class);
-			assertThat(round.result()).isSameAs(inputRequired);
-		}).verifyComplete();
 	}
 
 }

@@ -20,7 +20,9 @@ import java.util.stream.Stream;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
@@ -29,8 +31,8 @@ import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.McpSyncResponse;
 import io.modelcontextprotocol.modern.server.feature.McpSyncToolRepository;
-import io.modelcontextprotocol.modern.server.feature.SyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
@@ -114,10 +116,10 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 			}
 
 			@Override
-			public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
-				return switch (name) {
-					case "whoami" -> SyncFeatureHandler.of((c, req) -> text(whoami()));
-					case "whoami-streaming" -> SyncFeatureHandler.streaming((c, req, notifier) -> {
+			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
+				return switch (request.name()) {
+					case "whoami" -> McpSyncResponse.result(text(whoami()));
+					case "whoami-streaming" -> McpSyncResponse.streaming(notifier -> {
 						notifier.progress(0.5, 1.0, whoami());
 						boolean released;
 						try {
@@ -129,7 +131,7 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 						}
 						return text(whoami() + (released ? "" : " (progress never reached the client)"));
 					});
-					default -> null;
+					default -> throw McpException.invalidParams("Unknown tool: " + request.name());
 				};
 			}
 		};

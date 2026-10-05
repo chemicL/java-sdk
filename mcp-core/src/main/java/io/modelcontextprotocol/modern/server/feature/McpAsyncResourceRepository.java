@@ -6,9 +6,11 @@ package io.modelcontextprotocol.modern.server.feature;
 
 import java.util.List;
 
+import io.modelcontextprotocol.modern.McpException;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceOutcome;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
-import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import reactor.core.publisher.Mono;
 
 /**
@@ -25,9 +27,10 @@ public interface McpAsyncResourceRepository {
 	}
 
 	/**
-	 * @return the handler for {@code uri}, or {@link Mono#empty()} if it doesn't exist
-	 * (answered as {@code -32602})
+	 * Answer a {@code resources/read}. An unknown resource is an
+	 * {@link McpException#invalidParams(String, Object) invalid-params error} carrying
+	 * {@code {"uri": ...}} as data.
 	 */
-	Mono<AsyncFeatureHandler<ReadResourceRequest, ReadResourceResult>> resolve(McpRequestContext ctx, String uri);
+	Mono<McpAsyncResponse<ReadResourceOutcome>> read(McpRequestContext ctx, ReadResourceRequest request);
 
 }

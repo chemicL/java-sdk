@@ -30,7 +30,7 @@ class CompletionsFeatureTests {
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
 			.feature(
-					CompletionsFeature.of(
+					CompletionsFeature.ofAsync(
 							(McpAsyncCompletionRepository) (ctx, request) -> Mono
 								.just(CompleteResult.of(new CompleteResult.Completion(List.of()))),
 							new GsonMcpJsonMapper()))

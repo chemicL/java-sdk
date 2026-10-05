@@ -4,9 +4,11 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpException;
+import io.modelcontextprotocol.modern.McpSchema.GetPromptOutcome;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
-import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import reactor.core.publisher.Mono;
 
 /**
@@ -19,9 +21,9 @@ public interface McpAsyncPromptRepository {
 	Mono<PromptsPage> list(McpRequestContext ctx, String cursor);
 
 	/**
-	 * @return the handler for {@code name}, or {@link Mono#empty()} if it doesn't exist
-	 * (answered as {@code -32602})
+	 * Answer a {@code prompts/get}. An unknown prompt is an
+	 * {@link McpException#invalidParams(String) invalid-params error}.
 	 */
-	Mono<AsyncFeatureHandler<GetPromptRequest, GetPromptResult>> resolve(McpRequestContext ctx, String name);
+	Mono<McpAsyncResponse<GetPromptOutcome>> get(McpRequestContext ctx, GetPromptRequest request);
 
 }

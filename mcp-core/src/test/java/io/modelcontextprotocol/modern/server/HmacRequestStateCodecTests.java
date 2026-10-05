@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.modelcontextprotocol.common.McpTransportContext;
-import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
@@ -48,7 +47,7 @@ class HmacRequestStateCodecTests {
 
 		String sealed = codec.seal(ctx, "plaintext-state");
 		assertThat(sealed).isNotEqualTo("plaintext-state");
-		assertThat(codec.open(ctx, sealed)).isEqualTo("plaintext-state");
+		assertThat(codec.open(ctx, sealed)).contains("plaintext-state");
 	}
 
 	@Test
@@ -59,7 +58,7 @@ class HmacRequestStateCodecTests {
 		String sealed = codec.seal(ctx, "state");
 		String tampered = "x" + sealed.substring(1);
 
-		assertThatThrownBy(() -> codec.open(ctx, tampered)).isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx, tampered)).isEmpty();
 	}
 
 	@Test
@@ -70,7 +69,7 @@ class HmacRequestStateCodecTests {
 		String sealed = codec.seal(ctx, "state");
 		String tampered = sealed.substring(0, sealed.length() - 1) + (sealed.endsWith("A") ? "B" : "A");
 
-		assertThatThrownBy(() -> codec.open(ctx, tampered)).isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx, tampered)).isEmpty();
 	}
 
 	@Test
@@ -103,7 +102,7 @@ class HmacRequestStateCodecTests {
 		String sealed = codec.seal(ctx, "state");
 
 		now.set(start.plus(Duration.ofMinutes(2)));
-		assertThatThrownBy(() -> codec.open(ctx, sealed)).isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx, sealed)).isEmpty();
 	}
 
 	@Test
@@ -119,7 +118,7 @@ class HmacRequestStateCodecTests {
 		McpTransportContext bob = McpTransportContext.create(Map.of("user", "bob"));
 		String sealed = codec.seal(ctx("tools/call", "echo", alice), "state");
 
-		assertThatThrownBy(() -> codec.open(ctx("tools/call", "echo", bob), sealed)).isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx("tools/call", "echo", bob), sealed)).isEmpty();
 	}
 
 	@Test
@@ -128,8 +127,7 @@ class HmacRequestStateCodecTests {
 		HmacRequestStateCodec codec = codec(clock);
 		String sealed = codec.seal(ctx("tools/call", "echo", McpTransportContext.EMPTY), "state");
 
-		assertThatThrownBy(() -> codec.open(ctx("resources/read", "echo", McpTransportContext.EMPTY), sealed))
-			.isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx("resources/read", "echo", McpTransportContext.EMPTY), sealed)).isEmpty();
 	}
 
 	@Test
@@ -138,8 +136,7 @@ class HmacRequestStateCodecTests {
 		HmacRequestStateCodec codec = codec(clock);
 		String sealed = codec.seal(ctx("tools/call", "echo", McpTransportContext.EMPTY), "state");
 
-		assertThatThrownBy(() -> codec.open(ctx("tools/call", "other-tool", McpTransportContext.EMPTY), sealed))
-			.isInstanceOf(McpError.class);
+		assertThat(codec.open(ctx("tools/call", "other-tool", McpTransportContext.EMPTY), sealed)).isEmpty();
 	}
 
 }

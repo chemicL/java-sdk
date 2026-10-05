@@ -4,25 +4,23 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
-import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.modern.McpError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ListResourceTemplatesResult;
 import io.modelcontextprotocol.modern.McpSchema.ListResourcesResult;
 import io.modelcontextprotocol.modern.McpSchema.PaginatedRequest;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceOutcome;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
-import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
-import io.modelcontextprotocol.modern.server.McpHandler;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Mono;
 
@@ -53,8 +51,8 @@ public final class ResourcesFeature implements McpFeature {
 	}
 
 	/** Uses the default JSON mapper and no caching. */
-	public static ResourcesFeature of(McpAsyncResourceRepository repository) {
-		return of(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
+	public static ResourcesFeature ofAsync(McpAsyncResourceRepository repository) {
+		return ofAsync(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
 	}
 
 	/** Uses the default JSON mapper and no caching. */
@@ -62,7 +60,7 @@ public final class ResourcesFeature implements McpFeature {
 		return ofSync(repository, McpJsonDefaults.getMapper(), 0L, CacheScope.PRIVATE);
 	}
 
-	public static ResourcesFeature of(McpAsyncResourceRepository repository, McpJsonMapper jsonMapper,
+	public static ResourcesFeature ofAsync(McpAsyncResourceRepository repository, McpJsonMapper jsonMapper,
 			long defaultTtlMs, CacheScope defaultCacheScope) {
 		Assert.notNull(repository, "repository must not be null");
 		return new ResourcesFeature(repository, jsonMapper, defaultTtlMs, defaultCacheScope);
@@ -71,7 +69,7 @@ public final class ResourcesFeature implements McpFeature {
 	public static ResourcesFeature ofSync(McpSyncResourceRepository repository, McpJsonMapper jsonMapper,
 			long defaultTtlMs, CacheScope defaultCacheScope) {
 		Assert.notNull(repository, "repository must not be null");
-		return of(adapt(repository), jsonMapper, defaultTtlMs, defaultCacheScope);
+		return ofAsync(adapt(repository), jsonMapper, defaultTtlMs, defaultCacheScope);
 	}
 
 	@Override
@@ -81,12 +79,24 @@ public final class ResourcesFeature implements McpFeature {
 	}
 
 	@Override
-	public Mono<McpHandler> resolve(McpRequestContext ctx) {
-		return switch (ctx.method()) {
-			case McpSchema.METHOD_RESOURCES_LIST -> Mono.just(listHandler());
-			case McpSchema.METHOD_RESOURCES_TEMPLATES_LIST -> Mono.just(listTemplatesHandler());
-			default -> readHandler(ctx);
-		};
+	public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
+		if (McpSchema.METHOD_RESOURCES_READ.equals(ctx.method())) {
+			Optional<ReadResourceRequest> request = Params.decode(this.jsonMapper, params, ReadResourceRequest.class);
+			if (request.isEmpty()) {
+				return Params.malformed(ReadResourceRequest.class);
+			}
+			return this.repository.read(ctx, request.get());
+		}
+		Optional<PaginatedRequest> request = Params.decode(this.jsonMapper, params, PaginatedRequest.class);
+		if (request.isEmpty()) {
+			return Params.malformed(PaginatedRequest.class);
+		}
+		if (McpSchema.METHOD_RESOURCES_LIST.equals(ctx.method())) {
+			return this.repository.list(ctx, request.get().cursor())
+				.map(page -> McpAsyncResponse.result(toListResult(page)));
+		}
+		return this.repository.listTemplates(ctx, request.get().cursor())
+			.map(page -> McpAsyncResponse.result(toListTemplatesResult(page)));
 	}
 
 	@Override
@@ -97,35 +107,6 @@ public final class ResourcesFeature implements McpFeature {
 	@Override
 	public Set<String> inputRequiredMethods() {
 		return Set.of(McpSchema.METHOD_RESOURCES_READ);
-	}
-
-	private McpHandler listHandler() {
-		return (ctx, params) -> {
-			PaginatedRequest request = params == null ? new PaginatedRequest(null, null)
-					: FeatureHandlers.convertParams(this.jsonMapper, params, PaginatedRequest.class);
-			return this.repository.list(ctx, request.cursor()).map(this::toListResult);
-		};
-	}
-
-	private McpHandler listTemplatesHandler() {
-		return (ctx, params) -> {
-			PaginatedRequest request = params == null ? new PaginatedRequest(null, null)
-					: FeatureHandlers.convertParams(this.jsonMapper, params, PaginatedRequest.class);
-			return this.repository.listTemplates(ctx, request.cursor()).map(this::toListTemplatesResult);
-		};
-	}
-
-	private Mono<McpHandler> readHandler(McpRequestContext ctx) {
-		String uri = ctx.primitiveName();
-		if (uri == null || uri.isBlank()) {
-			throw McpError.builder(ErrorCodes.INVALID_PARAMS).message("params.uri is required").build();
-		}
-		return this.repository.resolve(ctx, uri)
-			.map(handler -> FeatureHandlers.toMcpHandler(handler, ReadResourceRequest.class, this.jsonMapper))
-			.switchIfEmpty(Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS)
-				.message("Unknown resource: " + uri)
-				.data(Map.of("uri", uri))
-				.build()));
 	}
 
 	private Result toListResult(ResourcesPage page) {
@@ -148,18 +129,18 @@ public final class ResourcesFeature implements McpFeature {
 		return new McpAsyncResourceRepository() {
 			@Override
 			public Mono<ResourcesPage> list(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.toAsync(ctx, () -> repository.list(ctx, cursor));
+				return SyncAdapters.call(ctx, () -> repository.list(ctx, cursor));
 			}
 
 			@Override
 			public Mono<ResourceTemplatesPage> listTemplates(McpRequestContext ctx, String cursor) {
-				return SyncAdapters.toAsync(ctx, () -> repository.listTemplates(ctx, cursor));
+				return SyncAdapters.call(ctx, () -> repository.listTemplates(ctx, cursor));
 			}
 
 			@Override
-			public Mono<AsyncFeatureHandler<ReadResourceRequest, ReadResourceResult>> resolve(McpRequestContext ctx,
-					String uri) {
-				return SyncAdapters.toAsync(ctx, () -> repository.resolve(ctx, uri)).map(SyncAdapters::toAsync);
+			public Mono<McpAsyncResponse<ReadResourceOutcome>> read(McpRequestContext ctx,
+					ReadResourceRequest request) {
+				return SyncAdapters.respond(ctx, () -> repository.read(ctx, request));
 			}
 		};
 	}

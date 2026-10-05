@@ -189,6 +189,43 @@ public final class McpSchema {
 	}
 
 	/**
+	 * A result asking the client for more input before the request can complete. An
+	 * extension method supporting multi round-trip requests returns its own record
+	 * implementing this interface and the method's outcome type.
+	 */
+	public interface InputRequired extends Result {
+
+		Map<String, InputRequest> inputRequests();
+
+		String requestState();
+
+	}
+
+	/**
+	 * What a {@code tools/call} handler returns: a {@link CallToolResult} or input
+	 * required.
+	 */
+	public interface CallToolOutcome extends Result {
+
+	}
+
+	/**
+	 * What a {@code prompts/get} handler returns: a {@link GetPromptResult} or input
+	 * required.
+	 */
+	public interface GetPromptOutcome extends Result {
+
+	}
+
+	/**
+	 * What a {@code resources/read} handler returns: a {@link ReadResourceResult} or
+	 * input required.
+	 */
+	public interface ReadResourceOutcome extends Result {
+
+	}
+
+	/**
 	 * Who may reuse a cached response. {@code PUBLIC} asserts the response contains no
 	 * user-specific data and may be served to any client across access tokens; it must
 	 * never be the default. {@code PRIVATE} permits reuse only within the same
@@ -362,8 +399,7 @@ public final class McpSchema {
 		}
 
 		/**
-		 * Builder that supports merging contributions from multiple features via
-		 * {@link #merge(ServerCapabilities)}.
+		 * Collects the capabilities contributed by each registered feature.
 		 */
 		public static final class Builder {
 
@@ -433,7 +469,7 @@ public final class McpSchema {
 				return this.resources != null;
 			}
 
-			/** Turns on {@code listChanged}/{@code subscribe} flags contributed later. */
+			/** Sets {@code tools.listChanged}; a no-op unless tools are advertised. */
 			public Builder toolsListChanged(boolean listChanged) {
 				if (this.tools != null) {
 					this.tools = new Tools(listChanged);
@@ -441,6 +477,9 @@ public final class McpSchema {
 				return this;
 			}
 
+			/**
+			 * Sets {@code prompts.listChanged}; a no-op unless prompts are advertised.
+			 */
 			public Builder promptsListChanged(boolean listChanged) {
 				if (this.prompts != null) {
 					this.prompts = new Prompts(listChanged);
@@ -448,6 +487,10 @@ public final class McpSchema {
 				return this;
 			}
 
+			/**
+			 * Sets {@code resources.subscribe} and {@code resources.listChanged}; a no-op
+			 * unless resources are advertised.
+			 */
 			public Builder resourcesSubscribe(boolean subscribe, boolean listChanged) {
 				if (this.resources != null) {
 					this.resources = new Resources(subscribe, listChanged);
@@ -1074,7 +1117,7 @@ public final class McpSchema {
 		@JsonProperty("ttlMs") Long ttlMs,
 		@JsonProperty("cacheScope") CacheScope cacheScope,
 		@JsonProperty("resultType") String resultType,
-		@JsonProperty("_meta") Map<String, Object> meta) implements CacheableResult { // @formatter:on
+		@JsonProperty("_meta") Map<String, Object> meta) implements CacheableResult, ReadResourceOutcome { // @formatter:on
 
 		public ReadResourceResult {
 			Assert.notNull(contents, "contents must not be null");
@@ -1142,7 +1185,7 @@ public final class McpSchema {
 		@JsonProperty("structuredContent") Object structuredContent,
 		@JsonProperty("isError") Boolean isError,
 		@JsonProperty("resultType") String resultType,
-		@JsonProperty("_meta") Map<String, Object> meta) implements Result { // @formatter:on
+		@JsonProperty("_meta") Map<String, Object> meta) implements CallToolOutcome { // @formatter:on
 
 		public CallToolResult {
 			Assert.notNull(content, "content must not be null");
@@ -1211,7 +1254,7 @@ public final class McpSchema {
 		@JsonProperty("description") String description,
 		@JsonProperty("messages") List<PromptMessage> messages,
 		@JsonProperty("resultType") String resultType,
-		@JsonProperty("_meta") Map<String, Object> meta) implements Result { // @formatter:on
+		@JsonProperty("_meta") Map<String, Object> meta) implements GetPromptOutcome { // @formatter:on
 
 		public GetPromptResult {
 			Assert.notNull(messages, "messages must not be null");
@@ -1371,7 +1414,8 @@ public final class McpSchema {
 		@JsonProperty("inputRequests") Map<String, InputRequest> inputRequests,
 		@JsonProperty("requestState") String requestState,
 		@JsonProperty("resultType") String resultType,
-		@JsonProperty("_meta") Map<String, Object> meta) implements Result { // @formatter:on
+		@JsonProperty("_meta") Map<String, Object> meta)
+			implements InputRequired, CallToolOutcome, GetPromptOutcome, ReadResourceOutcome { // @formatter:on
 
 		public InputRequiredResult {
 			Assert.isTrue(inputRequests != null || requestState != null,

@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -20,8 +21,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.modern.McpError;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,10 +82,10 @@ public final class HmacRequestStateCodec implements RequestStateCodec {
 	}
 
 	@Override
-	public String open(McpRequestContext ctx, String sealed) {
+	public Optional<String> open(McpRequestContext ctx, String sealed) {
 		int dot = sealed == null ? -1 : sealed.lastIndexOf('.');
 		if (dot < 0) {
-			throw invalid();
+			return Optional.empty();
 		}
 		String payloadB64 = sealed.substring(0, dot);
 		String macB64 = sealed.substring(dot + 1);
@@ -97,10 +96,10 @@ public final class HmacRequestStateCodec implements RequestStateCodec {
 			actualMac = Base64.getUrlDecoder().decode(macB64);
 		}
 		catch (IllegalArgumentException e) {
-			throw invalid();
+			return Optional.empty();
 		}
 		if (!MessageDigest.isEqual(expectedMac, actualMac)) {
-			throw invalid();
+			return Optional.empty();
 		}
 
 		Payload payload;
@@ -109,23 +108,23 @@ public final class HmacRequestStateCodec implements RequestStateCodec {
 			payload = this.jsonMapper.readValue(payloadJson, Payload.class);
 		}
 		catch (Exception e) {
-			throw invalid();
+			return Optional.empty();
 		}
 
 		if (payload.exp() < this.clock.millis()) {
-			throw invalid();
+			return Optional.empty();
 		}
 		String principal = this.principalExtractor.apply(ctx.transportContext());
 		if (!Objects.equals(principal, payload.p())) {
-			throw invalid();
+			return Optional.empty();
 		}
 		if (!Objects.equals(ctx.method(), payload.m())) {
-			throw invalid();
+			return Optional.empty();
 		}
 		if (!Objects.equals(ctx.primitiveName(), payload.n())) {
-			throw invalid();
+			return Optional.empty();
 		}
-		return payload.s();
+		return Optional.of(payload.s());
 	}
 
 	private byte[] hmac(byte[] data) {
@@ -141,10 +140,6 @@ public final class HmacRequestStateCodec implements RequestStateCodec {
 
 	private static String base64Url(byte[] bytes) {
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-	}
-
-	private static McpError invalid() {
-		return McpError.builder(ErrorCodes.INVALID_PARAMS).message("Invalid or expired requestState").build();
 	}
 
 	private record Payload(@JsonProperty("v") int v, @JsonProperty("s") String s, @JsonProperty("exp") long exp,

@@ -9,9 +9,8 @@ import java.util.Map;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.modern.McpError;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.ListChangedParams;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.ResourceUpdatedParams;
@@ -68,8 +67,17 @@ final class SubscriptionsFeature implements McpFeature {
 	}
 
 	@Override
-	public Mono<McpHandler> resolve(McpRequestContext ctx) {
-		return Mono.just((McpHandler.Streaming) this::listen);
+	public Mono<McpAsyncResponse<Result>> handle(McpRequestContext ctx, Object params) {
+		SubscriptionsListenRequest request;
+		try {
+			request = params == null ? null : this.jsonMapper.convertValue(params, SubscriptionsListenRequest.class);
+		}
+		catch (RuntimeException ex) {
+			return Mono.error(McpException.invalidParams("Malformed SubscriptionsListenRequest"));
+		}
+		SubscriptionFilter requested = request == null || request.notifications() == null ? SubscriptionFilter.EMPTY
+				: request.notifications();
+		return Mono.just(McpAsyncResponse.streaming(notifier -> listen(ctx, intersect(requested), notifier)));
 	}
 
 	@Override
@@ -85,20 +93,7 @@ final class SubscriptionsFeature implements McpFeature {
 		}
 	}
 
-	private Mono<Result> listen(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
-		SubscriptionsListenRequest request;
-		try {
-			request = params == null ? null : this.jsonMapper.convertValue(params, SubscriptionsListenRequest.class);
-		}
-		catch (RuntimeException ex) {
-			return Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS)
-				.message("Malformed SubscriptionsListenRequest")
-				.build());
-		}
-		SubscriptionFilter requested = request == null || request.notifications() == null ? SubscriptionFilter.EMPTY
-				: request.notifications();
-		SubscriptionFilter honoured = intersect(requested);
-
+	private Mono<Result> listen(McpRequestContext ctx, SubscriptionFilter honoured, McpAsyncNotifier notifier) {
 		Map<String, Object> subscriptionMeta = Map.of(MetaKeys.SUBSCRIPTION_ID, ctx.requestId());
 		Mono<Void> ack = notifier.notify(McpSchema.METHOD_NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED,
 				new SubscriptionsAcknowledgedParams(honoured, subscriptionMeta));

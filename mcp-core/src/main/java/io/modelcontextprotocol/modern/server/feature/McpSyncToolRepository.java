@@ -4,9 +4,10 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
-import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
+import io.modelcontextprotocol.modern.server.McpSyncResponse;
 
 /**
  * The blocking counterpart of {@link McpAsyncToolRepository}.
@@ -17,9 +18,6 @@ public interface McpSyncToolRepository {
 
 	ToolsPage list(McpRequestContext ctx, String cursor);
 
-	/**
-	 * @return the handler, or {@code null} if no such tool exists
-	 */
-	SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name);
+	McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request);
 
 }

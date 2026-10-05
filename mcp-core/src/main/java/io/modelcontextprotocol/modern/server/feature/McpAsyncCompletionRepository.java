@@ -10,8 +10,7 @@ import io.modelcontextprotocol.modern.server.McpRequestContext;
 import reactor.core.publisher.Mono;
 
 /**
- * Answers {@code completion/complete}. Always answered with a single response; completion
- * never streams and never returns MRTR.
+ * Answers {@code completion/complete}. Completion never streams and never returns MRTR.
  *
  * @author Dariusz Jędrzejczyk
  */

@@ -10,8 +10,11 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonMapper;
@@ -22,12 +25,14 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpSchema;
-import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
+import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
+import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -44,6 +49,8 @@ import reactor.core.scheduler.Schedulers;
 public class StdioMcpTransport {
 
 	private static final Logger logger = LoggerFactory.getLogger(StdioMcpTransport.class);
+
+	private static final Duration GRACE_PERIOD = Duration.ofSeconds(2);
 
 	private final McpRequestManager requestManager;
 
@@ -63,9 +70,13 @@ public class StdioMcpTransport {
 
 	private final Object writerLock = new Object();
 
-	private final Map<String, Disposable> inFlight = new ConcurrentHashMap<>();
+	private final Map<Object, InFlight> inFlight = new ConcurrentHashMap<>();
+
+	private final Sinks.Empty<Void> writerDone = Sinks.empty();
 
 	private final Sinks.Empty<Void> completion = Sinks.empty();
+
+	private final AtomicBoolean shutDown = new AtomicBoolean();
 
 	private volatile boolean closing = false;
 
@@ -88,25 +99,57 @@ public class StdioMcpTransport {
 	 * called.
 	 */
 	public Mono<Void> start() {
-		this.writerSink.asFlux().publishOn(this.writerScheduler).doOnNext(this::writeLine).subscribe();
+		this.writerSink.asFlux()
+			.publishOn(this.writerScheduler)
+			.doOnNext(this::writeLine)
+			.doFinally(signal -> this.writerDone.tryEmitEmpty())
+			.subscribe();
 		this.readerScheduler.schedule(this::readLoop);
 		return this.completion.asMono();
 	}
 
+	/**
+	 * Stop reading and end all requests. If the request manager is a {@link McpServer},
+	 * active {@code subscriptions/listen} streams first end with their graceful
+	 * {@code complete} result.
+	 */
 	public Mono<Void> closeGracefully() {
-		return Mono.fromRunnable(this::shutdown);
+		return Mono.defer(() -> {
+			if (this.closing) {
+				return this.completion.asMono();
+			}
+			this.closing = true;
+			if (this.requestManager instanceof McpServer server) {
+				server.closeGracefully();
+			}
+			List<Mono<Void>> listenStreams = this.inFlight.values()
+				.stream()
+				.filter(InFlight::listen)
+				.map(InFlight::done)
+				.toList();
+			return Mono.when(listenStreams)
+				.timeout(GRACE_PERIOD, Mono.empty())
+				.then(Mono.fromRunnable(this::shutdown))
+				.then(this.completion.asMono());
+		});
 	}
 
 	private void shutdown() {
+		if (!this.shutDown.compareAndSet(false, true)) {
+			return;
+		}
 		this.closing = true;
-		this.inFlight.values().forEach(Disposable::dispose);
+		this.inFlight.values().forEach(entry -> entry.subscription().dispose());
 		this.inFlight.clear();
 		synchronized (this.writerLock) {
 			this.writerSink.tryEmitComplete();
 		}
-		this.completion.tryEmitEmpty();
-		this.readerScheduler.dispose();
-		this.writerScheduler.dispose();
+		// Let already-queued output reach stdout before the writer thread goes away.
+		this.writerDone.asMono().timeout(GRACE_PERIOD, Mono.empty()).onErrorComplete().doFinally(signal -> {
+			this.completion.tryEmitEmpty();
+			this.readerScheduler.dispose();
+			this.writerScheduler.dispose();
+		}).subscribe();
 	}
 
 	private void readLoop() {
@@ -174,26 +217,43 @@ public class StdioMcpTransport {
 		if (requestId == null) {
 			return;
 		}
-		Disposable subscription = this.inFlight.remove(String.valueOf(requestId));
-		if (subscription != null) {
-			subscription.dispose();
+		InFlight entry = this.inFlight.remove(keyOf(requestId));
+		if (entry != null) {
+			entry.subscription().dispose();
 		}
 	}
 
 	private void dispatch(JSONRPCRequest request) {
-		String key = String.valueOf(request.id());
-		Flux<JSONRPCMessage> flux = this.requestManager.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMapMany(invocation -> {
-				if (invocation instanceof McpInvocation.Streaming streaming) {
-					return streaming.messages();
-				}
-				return ((McpInvocation.Single) invocation).response().flux();
-			});
+		Object key = keyOf(request.id());
+		Flux<JSONRPCMessage> flux = this.requestManager.handle(McpTransportContext.EMPTY, request)
+			.flatMapMany(StdioMcpTransport::messages);
 
-		Disposable subscription = flux.doFinally(signal -> this.inFlight.remove(key))
-			.subscribe(this::emit, err -> logger.warn("Unhandled error dispatching request {}", key, err));
+		// Registered before subscribing: a request that completes synchronously removes
+		// its own entry in doFinally, which must not run before the put.
+		Sinks.Empty<Void> done = Sinks.empty();
+		InFlight entry = new InFlight(Disposables.swap(), done.asMono(),
+				McpSchema.METHOD_SUBSCRIPTIONS_LISTEN.equals(request.method()));
+		this.inFlight.put(key, entry);
+		entry.subscription().update(flux.doFinally(signal -> {
+			this.inFlight.remove(key, entry);
+			done.tryEmitEmpty();
+		}).subscribe(this::emit, err -> logger.warn("Unhandled error dispatching request {}", key, err)));
+	}
 
-		this.inFlight.put(key, subscription);
+	// stdio has no status channel: every response is just its messages.
+	private static Flux<JSONRPCMessage> messages(McpTransportResponse response) {
+		if (response instanceof McpTransportResponse.Streaming streaming) {
+			return streaming.messages();
+		}
+		if (response instanceof McpTransportResponse.Result result) {
+			return Flux.just(result.response());
+		}
+		return Flux.just(((McpTransportResponse.Error) response).response());
+	}
+
+	// Ids 1 and 1L must find the same entry, while "1" stays distinct.
+	private static Object keyOf(Object id) {
+		return id instanceof Number number ? (Object) number.longValue() : id;
 	}
 
 	private void emit(JSONRPCMessage message) {
@@ -224,6 +284,9 @@ public class StdioMcpTransport {
 		catch (IOException e) {
 			logger.warn("stdio write failed", e);
 		}
+	}
+
+	private record InFlight(Disposable.Swap subscription, Mono<Void> done, boolean listen) {
 	}
 
 }

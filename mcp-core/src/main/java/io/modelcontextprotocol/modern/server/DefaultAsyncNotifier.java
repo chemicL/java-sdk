@@ -14,7 +14,7 @@ import reactor.core.publisher.Sinks;
 
 /**
  * Default {@link McpAsyncNotifier}, backed by the {@link Sinks.Many} that feeds a
- * streaming invocation's message flux.
+ * streaming response's message flux.
  *
  * @author Dariusz Jędrzejczyk
  */

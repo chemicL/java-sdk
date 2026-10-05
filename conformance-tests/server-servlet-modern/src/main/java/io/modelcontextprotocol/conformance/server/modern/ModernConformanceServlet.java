@@ -4,14 +4,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.json.TypeRef;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema.AudioContent;
 import io.modelcontextprotocol.modern.McpSchema.BlobResourceContents;
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ClientCapabilities;
@@ -19,6 +22,7 @@ import io.modelcontextprotocol.modern.McpSchema.CompleteResult;
 import io.modelcontextprotocol.modern.McpSchema.CreateMessageRequest;
 import io.modelcontextprotocol.modern.McpSchema.ElicitFormRequest;
 import io.modelcontextprotocol.modern.McpSchema.EmbeddedResource;
+import io.modelcontextprotocol.modern.McpSchema.GetPromptOutcome;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptResult;
 import io.modelcontextprotocol.modern.McpSchema.ImageContent;
@@ -27,18 +31,22 @@ import io.modelcontextprotocol.modern.McpSchema.InputRequiredResult;
 import io.modelcontextprotocol.modern.McpSchema.Prompt;
 import io.modelcontextprotocol.modern.McpSchema.PromptArgument;
 import io.modelcontextprotocol.modern.McpSchema.PromptMessage;
+import io.modelcontextprotocol.modern.McpSchema.ReadResourceOutcome;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceRequest;
 import io.modelcontextprotocol.modern.McpSchema.ReadResourceResult;
 import io.modelcontextprotocol.modern.McpSchema.Resource;
+import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ResourceTemplate;
 import io.modelcontextprotocol.modern.McpSchema.Role;
 import io.modelcontextprotocol.modern.McpSchema.SamplingMessage;
 import io.modelcontextprotocol.modern.McpSchema.TextContent;
 import io.modelcontextprotocol.modern.McpSchema.TextResourceContents;
 import io.modelcontextprotocol.modern.McpSchema.Tool;
+import io.modelcontextprotocol.modern.server.InputResponses;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
-import io.modelcontextprotocol.modern.server.McpRoundResult;
 import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.McpSyncNotifier;
+import io.modelcontextprotocol.modern.server.McpSyncResponse;
 import io.modelcontextprotocol.modern.server.feature.CompletionsFeature;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.McpSyncPromptRepository;
@@ -51,7 +59,6 @@ import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
-import io.modelcontextprotocol.modern.server.feature.SyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.modern.server.transport.HttpServletMcpTransport;
@@ -110,9 +117,6 @@ public class ModernConformanceServlet {
 			""";
 
 	private static final Pattern TEMPLATE_URI = Pattern.compile("test://template/(.+)/data");
-
-	private static final TypeRef<Map<String, Object>> MAP_TYPE_REF = new TypeRef<>() {
-	};
 
 	private static final McpJsonMapper JSON = McpJsonDefaults.getMapper();
 
@@ -208,27 +212,49 @@ public class ModernConformanceServlet {
 			.build();
 	}
 
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record ElicitResponse(String action, Map<String, Object> content) {
+	}
+
 	/**
 	 * The accepted elicitation content in {@code inputResponses[key]}, or {@code null} if
-	 * the response is missing or malformed.
+	 * there is no response or it was not accepted.
 	 */
 	private static Map<String, Object> acceptedContent(Map<String, Object> inputResponses, String key) {
-		Map<String, Object> response = responseObject(inputResponses, key);
-		if (response == null || !"accept".equals(response.get("action"))
-				|| !(response.get("content") instanceof Map<?, ?>)) {
-			return null;
-		}
-		return JSON.convertValue(response.get("content"), MAP_TYPE_REF);
+		return InputResponses.get(inputResponses, key, ElicitResponse.class, JSON)
+			.filter(response -> "accept".equals(response.action()))
+			.map(ElicitResponse::content)
+			.orElse(null);
 	}
 
+	@SuppressWarnings("unchecked")
 	private static Map<String, Object> responseObject(Map<String, Object> inputResponses, String key) {
-		if (inputResponses == null || !(inputResponses.get(key) instanceof Map<?, ?>)) {
-			return null;
-		}
-		return JSON.convertValue(inputResponses.get(key), MAP_TYPE_REF);
+		return InputResponses.get(inputResponses, key, Map.class, JSON).orElse(null);
 	}
 
-	private record ToolEntry(Tool tool, SyncFeatureHandler<CallToolRequest, CallToolResult> handler) {
+	@FunctionalInterface
+	private interface Handler<R, O extends Result> {
+
+		McpSyncResponse<O> handle(McpRequestContext ctx, R request);
+
+	}
+
+	@FunctionalInterface
+	private interface StreamingTool {
+
+		CallToolResult run(McpRequestContext ctx, CallToolRequest request, McpSyncNotifier notifier);
+
+	}
+
+	private static <R, O extends Result> Handler<R, O> respond(BiFunction<McpRequestContext, R, O> fn) {
+		return (ctx, request) -> McpSyncResponse.result(fn.apply(ctx, request));
+	}
+
+	private static Handler<CallToolRequest, CallToolOutcome> stream(StreamingTool tool) {
+		return (ctx, request) -> McpSyncResponse.streaming(notifier -> tool.run(ctx, request, notifier));
+	}
+
+	private record ToolEntry(Tool tool, Handler<CallToolRequest, CallToolOutcome> handler) {
 	}
 
 	private static final class ConformanceTools implements McpSyncToolRepository {
@@ -237,18 +263,18 @@ public class ModernConformanceServlet {
 
 		ConformanceTools(SinkChangeFeed changes) {
 			add("test_simple_text", "Returns simple text content for testing",
-					SyncFeatureHandler.of((ctx, req) -> text("This is a simple text response for testing.")));
+					respond((ctx, req) -> text("This is a simple text response for testing.")));
 			add("test_image_content", "Returns image content for testing",
-					SyncFeatureHandler.of((ctx, req) -> CallToolResult.builder()
+					respond((ctx, req) -> CallToolResult.builder()
 						.addContent(ImageContent.builder(RED_PIXEL_PNG, "image/png").build())
 						.build()));
 			add("test_audio_content", "Returns audio content for testing",
-					SyncFeatureHandler.of((ctx, req) -> CallToolResult.builder()
+					respond((ctx, req) -> CallToolResult.builder()
 						.addContent(AudioContent.builder(MINIMAL_WAV, "audio/wav").build())
 						.build()));
 			add("test_embedded_resource", "Returns embedded resource content for testing",
-					SyncFeatureHandler.of(
-							(ctx, req) -> CallToolResult.builder()
+					respond((ctx,
+							req) -> CallToolResult.builder()
 								.addContent(
 										EmbeddedResource
 											.builder(TextResourceContents
@@ -259,8 +285,8 @@ public class ModernConformanceServlet {
 											.build())
 								.build()));
 			add("test_multiple_content_types", "Returns multiple content types for testing",
-					SyncFeatureHandler.of(
-							(ctx, req) -> CallToolResult.builder()
+					respond((ctx,
+							req) -> CallToolResult.builder()
 								.addContent(TextContent.builder("Multiple content types test:").build())
 								.addContent(ImageContent.builder(RED_PIXEL_PNG, "image/png").build())
 								.addContent(
@@ -273,159 +299,154 @@ public class ModernConformanceServlet {
 											.build())
 								.build()));
 			add("test_error_handling", "Tool that returns an error for testing error handling",
-					SyncFeatureHandler.of((ctx, req) -> CallToolResult.builder()
+					respond((ctx, req) -> CallToolResult.builder()
 						.addContent(TextContent.builder("This tool intentionally returns an error for testing").build())
 						.isError(true)
 						.build()));
-			add("test_tool_with_progress", "Tool that reports progress notifications",
-					SyncFeatureHandler.streaming((ctx, req, notifier) -> {
-						notifier.progress(0, 100.0, null);
-						sleep(50);
-						notifier.progress(50, 100.0, null);
-						sleep(50);
-						notifier.progress(100, 100.0, null);
-						return text("Tool execution completed with progress");
-					}));
+			add("test_tool_with_progress", "Tool that reports progress notifications", stream((ctx, req, notifier) -> {
+				notifier.progress(0, 100.0, null);
+				sleep(50);
+				notifier.progress(50, 100.0, null);
+				sleep(50);
+				notifier.progress(100, 100.0, null);
+				return text("Tool execution completed with progress");
+			}));
 
 			// SEP-1613 / SEP-2106 JSON Schema 2020-12 keyword preservation
 			add(Tool.builder("json_schema_2020_12_tool", JSON, JSON_SCHEMA_2020_12_INPUT)
 				.description("Tool with JSON Schema 2020-12 features (SEP-1613, SEP-2106)")
-				.build(), SyncFeatureHandler.of((ctx, req) -> text("ok")));
+				.build(), respond((ctx, req) -> text("ok")));
 
 			// SEP-2575 diagnostic tools
-			add("test_missing_capability", "Test tool requiring sampling", SyncFeatureHandler.of((ctx, req) -> {
-				ctx.requireCapability(ctx.clientCapabilities().supportsSampling(),
-						ClientCapabilities.builder().sampling().build());
-				return text("Success");
-			}));
+			add("test_missing_capability", "Test tool requiring sampling", (ctx, req) -> {
+				if (!ctx.clientCapabilities().supportsSampling()) {
+					throw McpException.missingClientCapability(ClientCapabilities.builder().sampling().build());
+				}
+				return McpSyncResponse.result(text("Success"));
+			});
 			add("test_streaming_elicitation", "Diagnostic tool validating response progress streams",
-					SyncFeatureHandler.streaming((ctx, req, notifier) -> {
+					stream((ctx, req, notifier) -> {
 						notifier.progress(50, 100.0, null);
 						return text("Streaming complete");
 					}));
 			// Logging is deprecated and unsupported, so no log is ever sent; the suite
 			// checks exactly that.
 			add("test_logging_tool", "Diagnostic logging validator tool",
-					SyncFeatureHandler.streaming((ctx, req, notifier) -> text("Logging evaluated")));
-			add("test_trigger_tool_change", "Emits a tools list-changed notification",
-					SyncFeatureHandler.of((ctx, req) -> {
-						changes.emit(new ServerChange.ToolsListChanged());
-						return text("Mutation triggered");
-					}));
-			add("test_trigger_prompt_change", "Emits a prompts list-changed notification",
-					SyncFeatureHandler.of((ctx, req) -> {
-						changes.emit(new ServerChange.PromptsListChanged());
-						return text("Mutation triggered");
-					}));
+					stream((ctx, req, notifier) -> text("Logging evaluated")));
+			add("test_trigger_tool_change", "Emits a tools list-changed notification", respond((ctx, req) -> {
+				changes.emit(new ServerChange.ToolsListChanged());
+				return text("Mutation triggered");
+			}));
+			add("test_trigger_prompt_change", "Emits a prompts list-changed notification", respond((ctx, req) -> {
+				changes.emit(new ServerChange.PromptsListChanged());
+				return text("Mutation triggered");
+			}));
 
 			// SEP-2322 MRTR tools
 			add("test_input_required_result_elicitation", "MRTR: returns InputRequiredResult with elicitation request",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						Map<String, Object> content = acceptedContent(req.inputResponses(), "user_name");
 						if (content == null || !(content.get("name") instanceof String name)) {
-							return McpRoundResult.inputRequired(InputRequiredResult.builder()
+							return InputRequiredResult.builder()
 								.elicit("user_name", elicitString("What is your name?", "name"))
-								.build());
+								.build();
 						}
-						return McpRoundResult.complete(text("Hello, " + name + "!"));
+						return text("Hello, " + name + "!");
 					}));
 			add("test_input_required_result_sampling", "MRTR: returns InputRequiredResult with sampling request",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						Map<String, Object> response = responseObject(req.inputResponses(), "capital_question");
 						if (response == null) {
-							return McpRoundResult.inputRequired(InputRequiredResult.builder()
+							return InputRequiredResult.builder()
 								.createMessage("capital_question", sample("What is the capital of France?", 100))
-								.build());
+								.build();
 						}
 						Object content = response.get("content");
 						Object answer = content instanceof Map<?, ?> m ? m.get("text") : null;
-						return McpRoundResult.complete(text("Sampling result: " + answer));
+						return text("Sampling result: " + answer);
 					}));
 			add("test_input_required_result_list_roots", "MRTR: returns InputRequiredResult with roots/list request",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						Map<String, Object> response = responseObject(req.inputResponses(), "client_roots");
 						if (response == null || !(response.get("roots") instanceof List<?> roots)) {
-							return McpRoundResult
-								.inputRequired(InputRequiredResult.builder().listRoots("client_roots").build());
+							return InputRequiredResult.builder().listRoots("client_roots").build();
 						}
-						return McpRoundResult.complete(text("Found " + roots.size() + " root(s): " + roots));
+						return text("Found " + roots.size() + " root(s): " + roots);
 					}));
 			add("test_input_required_result_request_state", "MRTR: returns InputRequiredResult with requestState",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						Map<String, Object> content = acceptedContent(req.inputResponses(), "confirm");
 						if ("request-state".equals(req.requestState()) && content != null
 								&& Boolean.TRUE.equals(content.get("ok"))) {
-							return McpRoundResult.complete(text("state-ok: requestState validated"));
+							return text("state-ok: requestState validated");
 						}
-						return McpRoundResult.inputRequired(InputRequiredResult.builder()
+						return InputRequiredResult.builder()
 							.elicit("confirm", elicitConfirm())
 							.requestState("request-state")
-							.build());
+							.build();
 					}));
 			add("test_input_required_result_multiple_inputs",
-					"MRTR: returns InputRequiredResult with multiple input requests",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					"MRTR: returns InputRequiredResult with multiple input requests", respond((ctx, req) -> {
 						Map<String, Object> user = acceptedContent(req.inputResponses(), "user_name");
 						Map<String, Object> greeting = responseObject(req.inputResponses(), "greeting");
 						Map<String, Object> roots = responseObject(req.inputResponses(), "client_roots");
 						if ("multiple-inputs".equals(req.requestState()) && user != null && greeting != null
 								&& roots != null) {
-							return McpRoundResult.complete(text("Name: " + user.get("name") + "; Roots: "
-									+ (roots.get("roots") instanceof List<?> l ? l.size() : 0)));
+							return text("Name: " + user.get("name") + "; Roots: "
+									+ (roots.get("roots") instanceof List<?> l ? l.size() : 0));
 						}
-						return McpRoundResult.inputRequired(InputRequiredResult.builder()
+						return InputRequiredResult.builder()
 							.elicit("user_name", elicitString("What is your name?", "name"))
 							.createMessage("greeting", sample("Generate a greeting", 50))
 							.listRoots("client_roots")
 							.requestState("multiple-inputs")
-							.build());
+							.build();
 					}));
 			add("test_input_required_result_multi_round", "MRTR: multi-round InputRequiredResult workflow",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						String state = req.requestState();
 						if (state != null && state.startsWith("round-1")) {
 							Map<String, Object> step1 = acceptedContent(req.inputResponses(), "step1");
 							if (step1 != null && step1.get("name") instanceof String name) {
-								return McpRoundResult.inputRequired(InputRequiredResult.builder()
+								return InputRequiredResult.builder()
 									.elicit("step2", elicitString("Step 2: What is your favorite color?", "color"))
 									.requestState("round-2:" + name)
-									.build());
+									.build();
 							}
 						}
 						if (state != null && state.startsWith("round-2:")) {
 							Map<String, Object> step2 = acceptedContent(req.inputResponses(), "step2");
 							if (step2 != null && step2.get("color") instanceof String color) {
-								return McpRoundResult.complete(text("Multi-round complete for "
-										+ state.substring("round-2:".length()) + " who likes " + color));
+								return text("Multi-round complete for " + state.substring("round-2:".length())
+										+ " who likes " + color);
 							}
 						}
-						return McpRoundResult.inputRequired(InputRequiredResult.builder()
+						return InputRequiredResult.builder()
 							.elicit("step1", elicitString("Step 1: What is your name?", "name"))
 							.requestState("round-1")
-							.build());
+							.build();
 					}));
 			// Integrity protection comes from the server's RequestStateCodec: a tampered
 			// requestState is rejected before this handler runs.
 			add("test_input_required_result_tampered_state", "MRTR: HMAC-signed requestState integrity test",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						if ("tamper-test".equals(req.requestState())
 								&& responseObject(req.inputResponses(), "confirm") != null) {
-							return McpRoundResult.complete(text("integrity-ok: state verified"));
+							return text("integrity-ok: state verified");
 						}
-						return McpRoundResult.inputRequired(InputRequiredResult.builder()
+						return InputRequiredResult.builder()
 							.elicit("confirm", elicitConfirm())
 							.requestState("tamper-test")
-							.build());
+							.build();
 					}));
 			add("test_input_required_result_capabilities", "MRTR: respects client capabilities in inputRequests",
-					SyncFeatureHandler.withInput((ctx, req) -> {
+					respond((ctx, req) -> {
 						if (req.inputResponses() != null && !req.inputResponses().isEmpty()) {
-							return McpRoundResult.complete(text(
-									"capabilities-ok: received " + String.join(",", req.inputResponses().keySet())));
+							return text("capabilities-ok: received " + String.join(",", req.inputResponses().keySet()));
 						}
 						ClientCapabilities caps = ctx.clientCapabilities();
 						if (!caps.supportsElicitationForm() && !caps.supportsSampling()) {
-							return McpRoundResult.complete(text("No supported capabilities declared"));
+							return text("No supported capabilities declared");
 						}
 						InputRequiredResult.Builder builder = InputRequiredResult.builder()
 							.requestState("capabilities-test:" + UUID.randomUUID());
@@ -435,15 +456,15 @@ public class ModernConformanceServlet {
 						if (caps.supportsSampling()) {
 							builder.createMessage("sample_input", sample("Sample request", 50));
 						}
-						return McpRoundResult.inputRequired(builder.build());
+						return builder.build();
 					}));
 		}
 
-		private void add(String name, String description, SyncFeatureHandler<CallToolRequest, CallToolResult> handler) {
+		private void add(String name, String description, Handler<CallToolRequest, CallToolOutcome> handler) {
 			add(Tool.builder(name, EMPTY_JSON_SCHEMA).description(description).build(), handler);
 		}
 
-		private void add(Tool tool, SyncFeatureHandler<CallToolRequest, CallToolResult> handler) {
+		private void add(Tool tool, Handler<CallToolRequest, CallToolOutcome> handler) {
 			this.tools.put(tool.name(), new ToolEntry(tool, handler));
 		}
 
@@ -453,9 +474,12 @@ public class ModernConformanceServlet {
 		}
 
 		@Override
-		public SyncFeatureHandler<CallToolRequest, CallToolResult> resolve(McpRequestContext ctx, String name) {
-			ToolEntry entry = this.tools.get(name);
-			return entry == null ? null : entry.handler();
+		public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
+			ToolEntry entry = this.tools.get(request.name());
+			if (entry == null) {
+				throw McpException.invalidParams("Unknown tool: " + request.name());
+			}
+			return entry.handler().handle(ctx, request);
 		}
 
 		private static void sleep(long millis) {
@@ -500,39 +524,43 @@ public class ModernConformanceServlet {
 		}
 
 		@Override
-		public SyncFeatureHandler<ReadResourceRequest, ReadResourceResult> resolve(McpRequestContext ctx, String uri) {
-			return switch (uri) {
+		public McpSyncResponse<ReadResourceOutcome> read(McpRequestContext ctx, ReadResourceRequest request) {
+			String uri = request.uri();
+			ReadResourceResult result = switch (uri) {
 				case "test://static-text" -> textResource(uri, "This is the content of the static text resource.");
 				case "test://watched-resource" -> textResource(uri, "This is a watched resource content.");
-				case "test://static-binary" -> SyncFeatureHandler.of((c, req) -> ReadResourceResult
+				case "test://static-binary" -> ReadResourceResult
 					.builder(List.of(BlobResourceContents.builder(uri, RED_PIXEL_PNG).mimeType("image/png").build()))
-					.build());
+					.build();
 				default -> templateResource(uri);
 			};
+			if (result == null) {
+				throw McpException.invalidParams("Unknown resource: " + uri, Map.of("uri", uri));
+			}
+			return McpSyncResponse.result(result);
 		}
 
-		private static SyncFeatureHandler<ReadResourceRequest, ReadResourceResult> textResource(String uri,
-				String text) {
-			return SyncFeatureHandler.of((c, req) -> ReadResourceResult
+		private static ReadResourceResult textResource(String uri, String text) {
+			return ReadResourceResult
 				.builder(List.of(TextResourceContents.builder(uri, text).mimeType("text/plain").build()))
-				.build());
+				.build();
 		}
 
-		private static SyncFeatureHandler<ReadResourceRequest, ReadResourceResult> templateResource(String uri) {
+		private static ReadResourceResult templateResource(String uri) {
 			Matcher matcher = TEMPLATE_URI.matcher(uri);
 			if (!matcher.matches()) {
 				return null;
 			}
 			String id = matcher.group(1);
 			String json = String.format("{\"id\":\"%s\",\"templateTest\":true,\"data\":\"Data for ID: %s\"}", id, id);
-			return SyncFeatureHandler.of((c, req) -> ReadResourceResult
+			return ReadResourceResult
 				.builder(List.of(TextResourceContents.builder(uri, json).mimeType("application/json").build()))
-				.build());
+				.build();
 		}
 
 	}
 
-	private record PromptEntry(Prompt prompt, SyncFeatureHandler<GetPromptRequest, GetPromptResult> handler) {
+	private record PromptEntry(Prompt prompt, Handler<GetPromptRequest, GetPromptOutcome> handler) {
 	}
 
 	private static final class ConformancePrompts implements McpSyncPromptRepository {
@@ -541,7 +569,7 @@ public class ModernConformanceServlet {
 
 		ConformancePrompts() {
 			add(Prompt.builder("test_simple_prompt").description("A simple prompt for testing").build(),
-					SyncFeatureHandler.of((ctx,
+					respond((ctx,
 							req) -> messages(PromptMessage
 								.builder(Role.USER, TextContent.builder("This is a simple prompt for testing.").build())
 								.build())));
@@ -550,7 +578,7 @@ public class ModernConformanceServlet {
 				.arguments(List.of(
 						PromptArgument.builder("arg1").description("First test argument").required(true).build(),
 						PromptArgument.builder("arg2").description("Second test argument").required(true).build()))
-				.build(), SyncFeatureHandler.of((ctx, req) -> {
+				.build(), respond((ctx, req) -> {
 					Map<String, String> args = req.arguments() == null ? Map.of() : req.arguments();
 					String text = String.format("Prompt with arguments: arg1='%s', arg2='%s'", args.get("arg1"),
 							args.get("arg2"));
@@ -562,7 +590,7 @@ public class ModernConformanceServlet {
 					.description("URI of the resource to embed")
 					.required(true)
 					.build()))
-				.build(), SyncFeatureHandler.of((ctx, req) -> {
+				.build(), respond((ctx, req) -> {
 					String resourceUri = req.arguments() == null ? null : req.arguments().get("resourceUri");
 					EmbeddedResource resource = EmbeddedResource
 						.builder(TextResourceContents.builder(resourceUri, "Embedded resource content for testing.")
@@ -576,7 +604,7 @@ public class ModernConformanceServlet {
 								.build());
 				}));
 			add(Prompt.builder("test_prompt_with_image").description("A prompt with image content for testing").build(),
-					SyncFeatureHandler.of((ctx, req) -> messages(
+					respond((ctx, req) -> messages(
 							PromptMessage.builder(Role.USER, ImageContent.builder(RED_PIXEL_PNG, "image/png").build())
 								.build(),
 							PromptMessage
@@ -584,20 +612,20 @@ public class ModernConformanceServlet {
 								.build())));
 			add(Prompt.builder("test_input_required_result_prompt")
 				.description("MRTR: prompt that requires elicitation input")
-				.build(), SyncFeatureHandler.withInput((ctx, req) -> {
+				.build(), respond((ctx, req) -> {
 					Map<String, Object> content = acceptedContent(req.inputResponses(), "user_context");
 					if (content == null || !(content.get("context") instanceof String context)) {
-						return McpRoundResult.inputRequired(InputRequiredResult.builder()
+						return InputRequiredResult.builder()
 							.elicit("user_context", elicitString("What context should the prompt use?", "context"))
-							.build());
+							.build();
 					}
-					return McpRoundResult.complete(messages(PromptMessage
+					return messages(PromptMessage
 						.builder(Role.USER, TextContent.builder("Prompt with context: " + context).build())
-						.build()));
+						.build());
 				}));
 		}
 
-		private void add(Prompt prompt, SyncFeatureHandler<GetPromptRequest, GetPromptResult> handler) {
+		private void add(Prompt prompt, Handler<GetPromptRequest, GetPromptOutcome> handler) {
 			this.prompts.put(prompt.name(), new PromptEntry(prompt, handler));
 		}
 
@@ -611,9 +639,12 @@ public class ModernConformanceServlet {
 		}
 
 		@Override
-		public SyncFeatureHandler<GetPromptRequest, GetPromptResult> resolve(McpRequestContext ctx, String name) {
-			PromptEntry entry = this.prompts.get(name);
-			return entry == null ? null : entry.handler();
+		public McpSyncResponse<GetPromptOutcome> get(McpRequestContext ctx, GetPromptRequest request) {
+			PromptEntry entry = this.prompts.get(request.name());
+			if (entry == null) {
+				throw McpException.invalidParams("Unknown prompt: " + request.name());
+			}
+			return entry.handler().handle(ctx, request);
 		}
 
 	}

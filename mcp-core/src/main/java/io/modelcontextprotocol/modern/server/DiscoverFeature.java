@@ -10,6 +10,7 @@ import java.util.Set;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.DiscoverResult;
+import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import reactor.core.publisher.Mono;
 
@@ -20,7 +21,7 @@ import reactor.core.publisher.Mono;
  */
 final class DiscoverFeature implements McpFeature {
 
-	private final McpHandler handler;
+	private final McpAsyncResponse<Result> response;
 
 	DiscoverFeature(List<String> supportedVersions, ServerCapabilities capabilities, String instructions, long ttlMs,
 			CacheScope cacheScope) {
@@ -29,7 +30,7 @@ final class DiscoverFeature implements McpFeature {
 			.ttlMs(ttlMs)
 			.cacheScope(cacheScope)
 			.build();
-		this.handler = (ctx, params) -> Mono.just(result);
+		this.response = McpAsyncResponse.result(result);
 	}
 
 	@Override
@@ -38,8 +39,8 @@ final class DiscoverFeature implements McpFeature {
 	}
 
 	@Override
-	public Mono<McpHandler> resolve(McpRequestContext ctx) {
-		return Mono.just(this.handler);
+	public Mono<McpAsyncResponse<Result>> handle(McpRequestContext ctx, Object params) {
+		return Mono.just(this.response);
 	}
 
 }

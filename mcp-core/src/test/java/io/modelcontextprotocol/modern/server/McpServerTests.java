@@ -8,10 +8,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 
-import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
@@ -26,6 +30,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.invoke;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.respond;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +42,8 @@ class McpServerTests {
 		return McpServer.builder().serverInfo(SERVER_INFO).jsonMapper(new GsonMcpJsonMapper());
 	}
 
-	private static McpFeature feature(String method, McpHandler handler) {
+	private static McpFeature feature(String method,
+			BiFunction<McpRequestContext, Object, Mono<? extends McpAsyncResponse<? extends Result>>> handler) {
 		return new McpFeature() {
 			@Override
 			public Set<String> methods() {
@@ -45,26 +51,31 @@ class McpServerTests {
 			}
 
 			@Override
-			public Mono<McpHandler> resolve(McpRequestContext ctx) {
-				return Mono.just(handler);
+			public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
+				return handler.apply(ctx, params);
 			}
 		};
 	}
 
+	private static CallToolResult ok() {
+		return CallToolResult.builder().addContent(TextContent.builder("ok").build()).build();
+	}
+
 	private static McpFeature echoFeature(String method) {
-		return feature(method, (ctx, params) -> Mono
-			.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
+		return feature(method, (ctx, params) -> Mono.just(McpAsyncResponse.result(ok())));
+	}
+
+	private static JSONRPCRequest request(String method, Map<String, Object> meta) {
+		return new JSONRPCRequest(method, 1, Map.of("_meta", meta));
 	}
 
 	@Test
 	void missingMetaIsRejected() {
 		McpServer server = baseBuilder().build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of());
 
-		StepVerifier.create(respond(server, request)).assertNext(response -> {
-			assertThat(response.error()).isNotNull();
-			assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
-		}).verifyComplete();
+		StepVerifier.create(invoke(server, new JSONRPCRequest("tools/list", 1, Map.of())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
 	}
 
 	@Test
@@ -72,22 +83,18 @@ class McpServerTests {
 		McpServer server = baseBuilder().build();
 		Map<String, Object> meta = new HashMap<>();
 		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
-		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+		StepVerifier.create(invoke(server, request("tools/list", meta)))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}
 
 	@Test
 	void unsupportedVersionIsRejected() {
 		McpServer server = baseBuilder().build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1,
-				Map.of("_meta", meta(MetaKeys.PROTOCOL_VERSION, "1999-01-01")));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(
-					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
+		StepVerifier.create(invoke(server, request("tools/list", meta(MetaKeys.PROTOCOL_VERSION, "1999-01-01"))))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
 			.verifyComplete();
 	}
 
@@ -96,43 +103,93 @@ class McpServerTests {
 		McpServer server = baseBuilder().build();
 		Map<String, Object> meta = new HashMap<>();
 		meta.put(MetaKeys.PROTOCOL_VERSION, "2099-01-01");
-		JSONRPCRequest request = new JSONRPCRequest("tools/list", 1, Map.of("_meta", meta));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(
-					response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
+		StepVerifier.create(invoke(server, request("tools/list", meta)))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION))
 			.verifyComplete();
 	}
 
 	@Test
 	void malformedClientCapabilitiesIsInvalidParams() {
 		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
-				Map.of("_meta", meta(MetaKeys.CLIENT_CAPABILITIES, "bogus")));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+		StepVerifier.create(invoke(server, request("tools/call", meta(MetaKeys.CLIENT_CAPABILITIES, "bogus"))))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}
 
 	@Test
 	void nonObjectParamsIsInvalidParams() {
 		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, List.of(1));
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+		StepVerifier.create(invoke(server, new JSONRPCRequest("tools/call", 1, List.of(1))))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void unknownMethodIsRejected() {
+		McpServer server = baseBuilder().build();
+
+		StepVerifier.create(invoke(server, request("does/not/exist", meta())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.METHOD_NOT_FOUND))
 			.verifyComplete();
 	}
 
 	@Test
 	void logLevelIsIgnored() {
 		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1,
-				Map.of("_meta", meta(MetaKeys.LOG_LEVEL, "not-a-level")));
 
-		StepVerifier.create(respond(server, request))
+		StepVerifier.create(respond(server, request("tools/call", meta(MetaKeys.LOG_LEVEL, "not-a-level"))))
 			.assertNext(response -> assertThat(response.error()).isNull())
+			.verifyComplete();
+	}
+
+	@Test
+	void signalledMcpExceptionIsAnsweredWithItsError() {
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call",
+					(ctx, params) -> Mono.error(new McpException(-32000, "Quota exceeded", Map.of("retryAfter", 5)))))
+			.build();
+
+		StepVerifier.create(invoke(server, request("tools/call", meta())))
+			.assertNext(invocation -> assertThat(invocation).isInstanceOfSatisfying(McpTransportResponse.Error.class,
+					error -> assertThat(error.response().error())
+						.isEqualTo(new JSONRPCError(-32000, "Quota exceeded", Map.of("retryAfter", 5)))))
+			.verifyComplete();
+	}
+
+	@Test
+	void thrownMcpExceptionIsAnsweredWithItsError() {
+		McpServer server = baseBuilder().feature(feature("tools/call", (ctx, params) -> {
+			throw McpException.invalidParams("bad arguments");
+		})).build();
+
+		StepVerifier.create(invoke(server, request("tools/call", meta())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void handlerExceptionBecomesInternalError() {
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call", (ctx, params) -> Mono.error(new RuntimeException("boom"))))
+			.build();
+
+		StepVerifier.create(invoke(server, request("tools/call", meta()))).assertNext(invocation -> {
+			assertError(invocation, ErrorCodes.INTERNAL_ERROR);
+			assertThat(((McpTransportResponse.Error) invocation).response().error().message()).doesNotContain("boom");
+		}).verifyComplete();
+	}
+
+	@Test
+	void handlerThrowingSynchronouslyBecomesInternalError() {
+		McpServer server = baseBuilder().feature(feature("tools/call", (ctx, params) -> {
+			throw new IllegalStateException("boom");
+		})).build();
+
+		StepVerifier.create(invoke(server, request("tools/call", meta())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
 	}
 
@@ -149,11 +206,25 @@ class McpServerTests {
 				return null;
 			}
 		};
-		McpServer server = baseBuilder().feature(feature("tools/call", (ctx, params) -> Mono.just(untyped))).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call", (ctx, params) -> Mono.just(McpAsyncResponse.<Result>result(untyped))))
+			.build();
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
+		StepVerifier.create(invoke(server, request("tools/call", meta())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INTERNAL_ERROR))
+			.verifyComplete();
+	}
+
+	@Test
+	void inputRequiredFromUndeclaredMethodBecomesInternalError() {
+		McpServer server = baseBuilder()
+			.feature(feature("resources/list",
+					(ctx, params) -> Mono
+						.just(McpAsyncResponse.result(InputRequiredResult.builder().requestState("s").build()))))
+			.build();
+
+		StepVerifier.create(invoke(server, request("resources/list", meta())))
+			.assertNext(invocation -> assertError(invocation, ErrorCodes.INTERNAL_ERROR))
 			.verifyComplete();
 	}
 
@@ -164,33 +235,10 @@ class McpServerTests {
 	}
 
 	@Test
-	void unknownMethodIsRejected() {
-		McpServer server = baseBuilder().build();
-		JSONRPCRequest request = new JSONRPCRequest("does/not/exist", 1, Map.of("_meta", meta()));
-
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.METHOD_NOT_FOUND))
-			.verifyComplete();
-	}
-
-	@Test
-	void handlerExceptionBecomesInternalError() {
-		McpFeature failing = feature("tools/call", (ctx, params) -> Mono.error(new RuntimeException("boom")));
-		McpServer server = baseBuilder().feature(failing).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
-
-		StepVerifier.create(respond(server, request)).assertNext(response -> {
-			assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR);
-			assertThat(response.error().message()).doesNotContain("boom");
-		}).verifyComplete();
-	}
-
-	@Test
 	void serverInfoIsStampedOnEveryResult() {
 		McpServer server = baseBuilder().feature(echoFeature("tools/call")).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
 
-		StepVerifier.create(respond(server, request)).assertNext(response -> {
+		StepVerifier.create(respond(server, request("tools/call", meta()))).assertNext(response -> {
 			@SuppressWarnings("unchecked")
 			Map<String, Object> result = (Map<String, Object>) response.result();
 			@SuppressWarnings("unchecked")
@@ -208,7 +256,7 @@ class McpServerTests {
 			}
 
 			@Override
-			public Mono<McpHandler> resolve(McpRequestContext ctx) {
+			public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
 				return Mono.empty();
 			}
 
@@ -218,9 +266,8 @@ class McpServerTests {
 			}
 		};
 		McpServer server = baseBuilder().feature(toolsCapability).build();
-		JSONRPCRequest request = new JSONRPCRequest("server/discover", 1, Map.of("_meta", meta()));
 
-		StepVerifier.create(respond(server, request)).assertNext(response -> {
+		StepVerifier.create(respond(server, request("server/discover", meta()))).assertNext(response -> {
 			@SuppressWarnings("unchecked")
 			Map<String, Object> result = (Map<String, Object>) response.result();
 			assertThat(result.get("supportedVersions")).isEqualTo(List.of(McpSchema.LATEST_PROTOCOL_VERSION));
@@ -229,59 +276,88 @@ class McpServerTests {
 	}
 
 	@Test
-	void streamingHandlerYieldsStreamingInvocation() {
-		McpHandler.Streaming streaming = new McpHandler.Streaming() {
-			@Override
-			public Mono<Result> handle(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
-				return notifier.progress(1.0, 2.0, "half")
+	void streamingBodyRunsOnlyOnceTheStreamIsSubscribed() {
+		AtomicBoolean ran = new AtomicBoolean();
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call", (ctx, params) -> Mono.just(McpAsyncResponse.streaming(notifier -> {
+				ran.set(true);
+				return Mono.just(ok());
+			}))))
+			.build();
+
+		McpTransportResponse invocation = invoke(server, request("tools/call", meta())).block();
+
+		assertThat(invocation).isInstanceOf(McpTransportResponse.Streaming.class);
+		assertThat(ran).isFalse();
+		StepVerifier.create(((McpTransportResponse.Streaming) invocation).messages())
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse response && response.error() == null)
+			.verifyComplete();
+		assertThat(ran).isTrue();
+	}
+
+	@Test
+	void streamingBodyNotificationsPrecedeTheResult() {
+		McpServer server = baseBuilder().feature(feature("tools/call",
+				(ctx, params) -> Mono.just(McpAsyncResponse.streaming(notifier -> notifier.progress(1.0, 2.0, "half")
 					.then(notifier.progress(2.0, 2.0, "done"))
-					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
-			}
-		};
-		McpFeature feature = feature("tools/call", streaming);
-		McpServer server = baseBuilder().feature(feature).build();
+					.thenReturn(ok())))))
+			.build();
 
-		Map<String, Object> meta = meta(MetaKeys.PROGRESS_TOKEN, "tok-1");
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta));
+		McpTransportResponse invocation = invoke(server, request("tools/call", meta(MetaKeys.PROGRESS_TOKEN, "tok-1")))
+			.block();
 
-		var invocation = server.resolveNonBlocking(McpTransportContext.EMPTY, request).block();
-		assertThat(invocation).isInstanceOf(McpInvocation.Streaming.class);
-
-		StepVerifier.create(((McpInvocation.Streaming) invocation).messages())
-			.expectNextCount(2)
+		StepVerifier.create(((McpTransportResponse.Streaming) invocation).messages())
+			.expectNextMatches(msg -> msg instanceof JSONRPCNotification)
+			.expectNextMatches(msg -> msg instanceof JSONRPCNotification)
 			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
 			.verifyComplete();
 	}
 
 	@Test
 	void progressIsSuppressedWithoutProgressToken() {
-		McpHandler.Streaming streaming = new McpHandler.Streaming() {
-			@Override
-			public Mono<Result> handle(McpRequestContext ctx, Object params, McpAsyncNotifier notifier) {
-				return notifier.progress(1.0, null, null)
-					.then(Mono.just(CallToolResult.builder().addContent(TextContent.builder("ok").build()).build()));
-			}
-		};
-		McpFeature feature = feature("tools/call", streaming);
-		McpServer server = baseBuilder().feature(feature).build();
-		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta()));
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call",
+					(ctx, params) -> Mono.just(McpAsyncResponse
+						.streaming(notifier -> notifier.progress(1.0, null, null).thenReturn(ok())))))
+			.build();
 
-		var invocation = (McpInvocation.Streaming) server.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.block();
-		StepVerifier.create(invocation.messages())
+		McpTransportResponse invocation = invoke(server, request("tools/call", meta())).block();
+
+		StepVerifier.create(((McpTransportResponse.Streaming) invocation).messages())
 			.expectNextMatches(msg -> msg instanceof JSONRPCResponse)
 			.verifyComplete();
 	}
 
 	@Test
-	void inputRequiredFromDisallowedMethodBecomesInternalError() {
-		McpFeature feature = feature("resources/list",
-				(ctx, params) -> Mono.just(InputRequiredResult.builder().requestState("s").build()));
-		McpServer server = baseBuilder().feature(feature).build();
-		JSONRPCRequest request = new JSONRPCRequest("resources/list", 1, Map.of("_meta", meta()));
+	void streamingBodyExceptionIsAnInternalErrorInStream() {
+		McpServer server = baseBuilder()
+			.feature(feature("tools/call",
+					(ctx, params) -> Mono
+						.just(McpAsyncResponse.streaming(notifier -> Mono.error(new IllegalStateException("boom"))))))
+			.build();
 
-		StepVerifier.create(respond(server, request))
-			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR))
+		McpTransportResponse invocation = invoke(server, request("tools/call", meta())).block();
+
+		StepVerifier.create(((McpTransportResponse.Streaming) invocation).messages())
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse response
+					&& response.error().code() == ErrorCodes.INTERNAL_ERROR)
+			.verifyComplete();
+	}
+
+	@Test
+	void streamingBodyMcpExceptionIsItsErrorInStream() {
+		McpServer server = baseBuilder()
+			.feature(
+					feature("tools/call",
+							(ctx, params) -> Mono.just(McpAsyncResponse
+								.streaming(notifier -> Mono.error(McpException.invalidParams("bad arguments"))))))
+			.build();
+
+		McpTransportResponse invocation = invoke(server, request("tools/call", meta())).block();
+
+		StepVerifier.create(((McpTransportResponse.Streaming) invocation).messages())
+			.expectNextMatches(msg -> msg instanceof JSONRPCResponse response
+					&& response.error().code() == ErrorCodes.INVALID_PARAMS)
 			.verifyComplete();
 	}
 
@@ -298,6 +374,11 @@ class McpServerTests {
 
 		assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class)
 			.hasMessageContaining("server/discover");
+	}
+
+	private static void assertError(McpTransportResponse response, int code) {
+		assertThat(response).isInstanceOfSatisfying(McpTransportResponse.Error.class,
+				error -> assertThat(error.response().error().code()).isEqualTo(code));
 	}
 
 }

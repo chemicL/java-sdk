@@ -10,8 +10,10 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,9 +29,9 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
-import io.modelcontextprotocol.modern.server.McpInvocation;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.modern.server.McpServer;
+import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.server.McpTransportContextExtractor;
 import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.HeaderAccessor;
@@ -47,12 +49,20 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
+import reactor.core.Disposables;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * A {@link HttpServlet} transport for a modern {@link McpRequestManager}: stateless, POST
  * only, one self-contained request or notification per call. Requests are blocking and
  * served on the container thread, so thread-locals set by servlet filters are visible to
  * sync handlers; {@code subscriptions/listen} is served asynchronously.
+ * <p>
+ * Authentication and authorization, including {@code 401}/{@code 403} challenges, belong
+ * in servlet filters in front of this servlet. Filters may decide on the
+ * {@code Mcp-Method} and {@code Mcp-Name} headers: a request whose headers disagree with
+ * its body is rejected before dispatch. Filters must support async requests.
  *
  * @author Dariusz Jędrzejczyk
  */
@@ -69,6 +79,19 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private static final String TEXT_EVENT_STREAM = "text/event-stream";
 
+	private static final String KEEP_ALIVE_FRAME = ":\n\n";
+
+	private static final Duration DEFAULT_KEEP_ALIVE_INTERVAL = Duration.ofSeconds(30);
+
+	// The statuses the MCP specification gives its error codes; any other code is
+	// answered with 200.
+	private static final Map<Integer, Integer> DEFAULT_ERROR_STATUSES = Map.of(ErrorCodes.PARSE_ERROR,
+			HttpServletResponse.SC_BAD_REQUEST, ErrorCodes.INVALID_REQUEST, HttpServletResponse.SC_BAD_REQUEST,
+			ErrorCodes.INVALID_PARAMS, HttpServletResponse.SC_BAD_REQUEST, ErrorCodes.HEADER_MISMATCH,
+			HttpServletResponse.SC_BAD_REQUEST, ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY,
+			HttpServletResponse.SC_BAD_REQUEST, ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION,
+			HttpServletResponse.SC_BAD_REQUEST, ErrorCodes.METHOD_NOT_FOUND, HttpServletResponse.SC_NOT_FOUND);
+
 	private final McpRequestManager requestManager;
 
 	private final McpJsonMapper jsonMapper;
@@ -81,17 +104,24 @@ public class HttpServletMcpTransport extends HttpServlet {
 
 	private final ServerHttpHeaderValidator httpHeaderValidator;
 
+	private final Duration keepAliveInterval;
+
+	private final Map<Integer, Integer> errorStatuses;
+
 	private volatile boolean closing = false;
 
 	private HttpServletMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, String mcpEndpoint,
 			McpTransportContextExtractor<HttpServletRequest> contextExtractor, int requestMaxSize,
-			ServerHttpHeaderValidator httpHeaderValidator) {
+			ServerHttpHeaderValidator httpHeaderValidator, Duration keepAliveInterval,
+			Map<Integer, Integer> errorStatuses) {
 		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.mcpEndpoint = mcpEndpoint;
 		this.contextExtractor = contextExtractor;
 		this.requestMaxSize = requestMaxSize;
 		this.httpHeaderValidator = httpHeaderValidator;
+		this.keepAliveInterval = keepAliveInterval;
+		this.errorStatuses = errorStatuses;
 	}
 
 	public static Builder builder(McpRequestManager requestManager) {
@@ -99,7 +129,7 @@ public class HttpServletMcpTransport extends HttpServlet {
 	}
 
 	/**
-	 * Stop accepting new requests. If the request handler is a {@link McpServer}, also
+	 * Stop accepting new requests. If the request manager is a {@link McpServer}, also
 	 * asks it to end active {@code subscriptions/listen} streams gracefully.
 	 */
 	public void closeGracefully() {
@@ -176,12 +206,12 @@ public class HttpServletMcpTransport extends HttpServlet {
 			message = JsonRpc.deserializeMessage(this.jsonMapper, body);
 		}
 		catch (IOException e) {
-			writeJsonRpcErrorResponse(response, null, new JSONRPCError(ErrorCodes.PARSE_ERROR, "Parse error"));
+			writeError(response, JSONRPCResponse.error(null, new JSONRPCError(ErrorCodes.PARSE_ERROR, "Parse error")));
 			return;
 		}
 		catch (IllegalArgumentException e) {
-			writeJsonRpcErrorResponse(response, null,
-					new JSONRPCError(ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message"));
+			writeError(response, JSONRPCResponse.error(null,
+					new JSONRPCError(ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message")));
 			return;
 		}
 
@@ -192,65 +222,59 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 
 		if (!(message instanceof JSONRPCRequest jsonRpcRequest)) {
-			writeJsonRpcErrorResponse(response, null, new JSONRPCError(ErrorCodes.INVALID_REQUEST,
-					"The server accepts either requests or notifications"));
+			writeError(response, JSONRPCResponse.error(null, new JSONRPCError(ErrorCodes.INVALID_REQUEST,
+					"The server accepts either requests or notifications")));
 			return;
 		}
 
 		String headerMismatch = validateHeaders(request, jsonRpcRequest);
 		if (headerMismatch != null) {
-			writeJsonRpcErrorResponse(response, jsonRpcRequest.id(),
-					new JSONRPCError(ErrorCodes.HEADER_MISMATCH, headerMismatch));
+			writeError(response, JSONRPCResponse.error(jsonRpcRequest.id(),
+					new JSONRPCError(ErrorCodes.HEADER_MISMATCH, headerMismatch)));
 			return;
 		}
 
 		boolean listen = McpSchema.METHOD_SUBSCRIPTIONS_LISTEN.equals(jsonRpcRequest.method());
-		McpInvocation invocation = (listen ? this.requestManager.resolveNonBlocking(transportContext, jsonRpcRequest)
-				: this.requestManager.resolveBlocking(transportContext, jsonRpcRequest))
+		McpTransportResponse transportResponse = (listen ? this.requestManager.handle(transportContext, jsonRpcRequest)
+				: this.requestManager.handleBlocking(transportContext, jsonRpcRequest))
 			.block();
 
-		if (invocation instanceof McpInvocation.Streaming streaming) {
+		if (transportResponse instanceof McpTransportResponse.Result result) {
+			writeJson(response, HttpServletResponse.SC_OK, result.response());
+		}
+		else if (transportResponse instanceof McpTransportResponse.Error error) {
+			writeError(response, error.response());
+		}
+		else if (transportResponse instanceof McpTransportResponse.Streaming streaming) {
+			PrintWriter writer = startEventStream(response);
 			if (listen) {
-				streamOverAsyncContext(request, response, streaming);
+				streamOverAsyncContext(request, writer, streaming);
 			}
 			else {
-				streamOnContainerThread(response, streaming);
+				streamOnContainerThread(writer, streaming);
 			}
-			return;
 		}
-
-		JSONRPCResponse jsonRpcResponse = ((McpInvocation.Single) invocation).response().block();
-		writeSingleResponse(response, jsonRpcResponse);
 	}
 
-	private void streamOnContainerThread(HttpServletResponse response, McpInvocation.Streaming streaming)
-			throws IOException {
-		PrintWriter writer = startEventStream(response);
+	private void streamOnContainerThread(PrintWriter writer, McpTransportResponse.Streaming streaming) {
 		// Blocking on the container thread lets sync handlers run inside this
-		// subscription, each notification written before its notifier call returns. A
-		// client disconnect fails a write and cancels the stream, but blocking handler
-		// code can't be interrupted: it runs to completion, its output discarded.
+		// subscription. A client disconnect fails a write and cancels the stream, but
+		// blocking handler code can't be interrupted: it runs to completion, its output
+		// discarded.
 		try {
-			streaming.messages().doOnNext(message -> writeEvent(writer, message)).blockLast();
+			frames(streaming.messages()).doOnNext(frame -> writeFrame(writer, frame)).blockLast();
 		}
 		catch (RuntimeException ex) {
 			logger.debug("Streaming response ended early: {}", ex.getMessage());
 		}
 	}
 
-	private void streamOverAsyncContext(HttpServletRequest request, HttpServletResponse response,
-			McpInvocation.Streaming streaming) throws IOException {
-		PrintWriter writer = startEventStream(response);
+	private void streamOverAsyncContext(HttpServletRequest request, PrintWriter writer,
+			McpTransportResponse.Streaming streaming) {
 		AsyncContext asyncContext = request.startAsync();
 		asyncContext.setTimeout(0);
 
-		Disposable subscription = streaming.messages()
-			.doOnNext(message -> writeEvent(writer, message))
-			.subscribe(null, error -> {
-				logger.debug("Listen stream ended early: {}", error.getMessage());
-				asyncContext.complete();
-			}, asyncContext::complete);
-
+		Disposable.Swap subscription = Disposables.swap();
 		asyncContext.addListener(new AsyncListener() {
 			@Override
 			public void onComplete(AsyncEvent event) {
@@ -270,9 +294,43 @@ public class HttpServletMcpTransport extends HttpServlet {
 			public void onStartAsync(AsyncEvent event) {
 			}
 		});
+
+		// Changes are emitted on whatever thread produced them. Writing on a worker of
+		// its own leaves those threads with a non-blocking hand-off; while a slow client
+		// holds the writer, the backlog waits in the stream's own buffer upstream.
+		subscription.update(frames(streaming.messages()).publishOn(Schedulers.boundedElastic())
+			.doOnNext(frame -> writeFrame(writer, frame))
+			.subscribe(null, error -> {
+				logger.debug("Listen stream ended early: {}", error.getMessage());
+				asyncContext.complete();
+			}, asyncContext::complete));
 	}
 
-	private PrintWriter startEventStream(HttpServletResponse response) throws IOException {
+	private Flux<String> frames(Flux<JSONRPCMessage> messages) {
+		Flux<String> events = messages.map(this::eventFrame);
+		if (this.keepAliveInterval == null) {
+			return events;
+		}
+		// Keep-alives stop with the stream. A keep-alive that fails to write is how a
+		// quiet stream notices the client is gone. A tick nobody has requested is
+		// dropped: Flux.interval would otherwise fail the stream while a slow client
+		// holds up the writer.
+		return events.publish(shared -> shared.mergeWith(Flux.interval(this.keepAliveInterval)
+			.onBackpressureDrop()
+			.map(tick -> KEEP_ALIVE_FRAME)
+			.takeUntilOther(shared.then())));
+	}
+
+	private String eventFrame(JSONRPCMessage message) {
+		try {
+			return "event: message\ndata: " + this.jsonMapper.writeValueAsString(message) + "\n\n";
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
+	}
+
+	private static PrintWriter startEventStream(HttpServletResponse response) throws IOException {
 		response.setContentType(TEXT_EVENT_STREAM);
 		response.setCharacterEncoding(UTF_8);
 		response.setHeader("Cache-Control", "no-cache");
@@ -282,15 +340,8 @@ public class HttpServletMcpTransport extends HttpServlet {
 		return response.getWriter();
 	}
 
-	private void writeEvent(PrintWriter writer, JSONRPCMessage message) {
-		String json;
-		try {
-			json = this.jsonMapper.writeValueAsString(message);
-		}
-		catch (IOException ex) {
-			throw new UncheckedIOException(ex);
-		}
-		writer.write("event: message\ndata: " + json + "\n\n");
+	private static void writeFrame(PrintWriter writer, String frame) {
+		writer.write(frame);
 		writer.flush();
 		// PrintWriter swallows I/O errors; checkError is how a closed client shows up.
 		if (writer.checkError()) {
@@ -298,31 +349,19 @@ public class HttpServletMcpTransport extends HttpServlet {
 		}
 	}
 
-	private void writeSingleResponse(HttpServletResponse response, JSONRPCResponse jsonRpcResponse) throws IOException {
-		int status = jsonRpcResponse.error() != null ? httpStatusFor(jsonRpcResponse.error().code())
-				: HttpServletResponse.SC_OK;
+	private void writeError(HttpServletResponse response, JSONRPCResponse jsonRpcResponse) throws IOException {
+		writeJson(response, this.errorStatuses.getOrDefault(jsonRpcResponse.error().code(), HttpServletResponse.SC_OK),
+				jsonRpcResponse);
+	}
+
+	private void writeJson(HttpServletResponse response, int status, JSONRPCResponse jsonRpcResponse)
+			throws IOException {
 		response.setContentType(APPLICATION_JSON);
 		response.setCharacterEncoding(UTF_8);
 		response.setStatus(status);
 		PrintWriter writer = response.getWriter();
 		writer.write(this.jsonMapper.writeValueAsString(jsonRpcResponse));
 		writer.flush();
-	}
-
-	private static int httpStatusFor(int jsonRpcErrorCode) {
-		return switch (jsonRpcErrorCode) {
-			case ErrorCodes.INVALID_PARAMS, ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY,
-					ErrorCodes.UNSUPPORTED_PROTOCOL_VERSION, ErrorCodes.HEADER_MISMATCH, ErrorCodes.INVALID_REQUEST,
-					ErrorCodes.PARSE_ERROR ->
-				HttpServletResponse.SC_BAD_REQUEST;
-			case ErrorCodes.METHOD_NOT_FOUND -> HttpServletResponse.SC_NOT_FOUND;
-			default -> HttpServletResponse.SC_OK;
-		};
-	}
-
-	private void writeJsonRpcErrorResponse(HttpServletResponse response, Object id, JSONRPCError error)
-			throws IOException {
-		writeSingleResponse(response, JSONRPCResponse.error(id, error));
 	}
 
 	/**
@@ -459,6 +498,10 @@ public class HttpServletMcpTransport extends HttpServlet {
 		private ServerHttpHeaderValidator httpHeaderValidator = DefaultServerTransportSecurityValidator.builder()
 			.build();
 
+		private Duration keepAliveInterval = DEFAULT_KEEP_ALIVE_INTERVAL;
+
+		private final Map<Integer, Integer> errorStatuses = new HashMap<>(DEFAULT_ERROR_STATUSES);
+
 		private Builder(McpRequestManager requestManager) {
 			Assert.notNull(requestManager, "requestManager must not be null");
 			this.requestManager = requestManager;
@@ -505,10 +548,34 @@ public class HttpServletMcpTransport extends HttpServlet {
 			return this;
 		}
 
+		/**
+		 * How often an open event stream gets an SSE comment, keeping intermediaries from
+		 * closing it and detecting clients that went away. {@code null} disables
+		 * keep-alives. Defaults to 30 seconds.
+		 */
+		public Builder keepAliveInterval(Duration keepAliveInterval) {
+			Assert.isTrue(keepAliveInterval == null || !(keepAliveInterval.isNegative() || keepAliveInterval.isZero()),
+					"keepAliveInterval must be positive");
+			this.keepAliveInterval = keepAliveInterval;
+			return this;
+		}
+
+		/**
+		 * The HTTP status answering a JSON-RPC error with {@code code}, unless a stream
+		 * has already started. Defaults cover the codes the MCP specification defines;
+		 * other codes are answered with 200.
+		 */
+		public Builder errorStatus(int code, int status) {
+			Assert.isTrue(status >= 200 && status <= 599, "status must be a valid HTTP status");
+			this.errorStatuses.put(code, status);
+			return this;
+		}
+
 		public HttpServletMcpTransport build() {
 			McpJsonMapper mapper = this.jsonMapper != null ? this.jsonMapper : McpJsonDefaults.getMapper();
 			return new HttpServletMcpTransport(this.requestManager, mapper, this.mcpEndpoint, this.contextExtractor,
-					this.requestMaxSize, this.httpHeaderValidator);
+					this.requestMaxSize, this.httpHeaderValidator, this.keepAliveInterval,
+					Map.copyOf(this.errorStatuses));
 		}
 
 	}

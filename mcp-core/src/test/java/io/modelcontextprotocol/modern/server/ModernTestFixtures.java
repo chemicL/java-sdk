@@ -7,16 +7,17 @@ package io.modelcontextprotocol.modern.server;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
+import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
-import io.modelcontextprotocol.modern.McpSchema.CallToolResult;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
-import io.modelcontextprotocol.modern.server.feature.AsyncFeatureHandler;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import reactor.core.publisher.Mono;
@@ -45,14 +46,26 @@ public final class ModernTestFixtures {
 		return meta;
 	}
 
-	/** Resolves the request without blocking and returns the single response. */
-	public static Mono<JSONRPCResponse> respond(McpRequestManager manager, JSONRPCRequest request) {
-		return manager.resolveNonBlocking(McpTransportContext.EMPTY, request)
-			.flatMap(invocation -> ((McpInvocation.Single) invocation).response());
+	/** Answers the request without blocking. */
+	public static Mono<McpTransportResponse> invoke(McpRequestManager manager, JSONRPCRequest request) {
+		return manager.handle(McpTransportContext.EMPTY, request);
 	}
 
-	/** A tool repository with no tools. */
-	public static McpAsyncToolRepository emptyTools() {
+	/** Answers the request without blocking and returns its non-streaming response. */
+	public static Mono<JSONRPCResponse> respond(McpRequestManager manager, JSONRPCRequest request) {
+		return invoke(manager, request).map(response -> {
+			if (response instanceof McpTransportResponse.Result result) {
+				return result.response();
+			}
+			return ((McpTransportResponse.Error) response).response();
+		});
+	}
+
+	/**
+	 * A tool repository with no listed tools whose calls are answered by {@code call}.
+	 */
+	public static McpAsyncToolRepository tools(
+			BiFunction<McpRequestContext, CallToolRequest, Mono<McpAsyncResponse<CallToolOutcome>>> call) {
 		return new McpAsyncToolRepository() {
 			@Override
 			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
@@ -60,11 +73,15 @@ public final class ModernTestFixtures {
 			}
 
 			@Override
-			public Mono<AsyncFeatureHandler<CallToolRequest, CallToolResult>> resolve(McpRequestContext ctx,
-					String name) {
-				return Mono.empty();
+			public Mono<McpAsyncResponse<CallToolOutcome>> call(McpRequestContext ctx, CallToolRequest request) {
+				return call.apply(ctx, request);
 			}
 		};
+	}
+
+	/** A tool repository with no tools. */
+	public static McpAsyncToolRepository emptyTools() {
+		return tools((ctx, request) -> Mono.error(McpException.invalidParams("Unknown tool: " + request.name())));
 	}
 
 }

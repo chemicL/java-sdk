@@ -5,10 +5,10 @@
 package io.modelcontextprotocol.modern.server;
 
 import java.util.Map;
+import java.util.Optional;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.modern.McpError;
-import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
+import io.modelcontextprotocol.modern.McpException;
 
 /**
  * Reads a typed value out of the raw {@code inputResponses} map a retried
@@ -23,25 +23,24 @@ public final class InputResponses {
 	}
 
 	/**
-	 * @return the response for {@code key} converted to {@code type}, or {@code null} if
-	 * {@code inputResponses} is {@code null} or has no entry for {@code key}
-	 * @throws McpError {@code -32602} if the response cannot be converted to {@code type}
+	 * @return the response for {@code key} converted to {@code type}, or empty if there
+	 * is no such response
+	 * @throws McpException {@code -32602} if the response cannot be converted to
+	 * {@code type}
 	 */
-	public static <T> T get(Map<String, Object> inputResponses, String key, Class<T> type, McpJsonMapper jsonMapper) {
-		if (inputResponses == null) {
-			return null;
-		}
-		Object raw = inputResponses.get(key);
+	public static <T> Optional<T> get(Map<String, Object> inputResponses, String key, Class<T> type,
+			McpJsonMapper jsonMapper) {
+		Object raw = inputResponses == null ? null : inputResponses.get(key);
 		if (raw == null) {
-			return null;
+			return Optional.empty();
 		}
 		try {
-			return jsonMapper.convertValue(raw, type);
+			return Optional.of(jsonMapper.convertValue(raw, type));
 		}
 		catch (RuntimeException ex) {
-			throw McpError.builder(ErrorCodes.INVALID_PARAMS)
-				.message("inputResponses['" + key + "'] is malformed")
-				.build();
+			// The mapper's message describes the payload, so it is not passed to the
+			// client
+			throw McpException.invalidParams("Malformed inputResponses['" + key + "']");
 		}
 	}
 
