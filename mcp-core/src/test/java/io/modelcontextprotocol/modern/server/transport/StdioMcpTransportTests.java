@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
@@ -20,8 +21,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.UnaryOperator;
@@ -40,18 +43,21 @@ import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
@@ -69,7 +75,7 @@ class StdioMcpTransportTests {
 
 	private StdioMcpTransport transport;
 
-	private Mono<Void> served;
+	private Sinks.Empty<Void> done = Sinks.empty();
 
 	private void start(McpRequestManager manager) throws IOException {
 		start(manager, this.jsonMapper, UnaryOperator.identity());
@@ -84,8 +90,7 @@ class StdioMcpTransportTests {
 		this.serverResponses = new BufferedReader(new InputStreamReader(clientIn, StandardCharsets.UTF_8));
 
 		this.transport = new StdioMcpTransport(manager, serverMapper, this.serverIn, wrapOut.apply(this.serverOut));
-		this.served = this.transport.start();
-		this.served.subscribe();
+		this.transport.start().doFinally(ignored -> done.tryEmitEmpty()).subscribe();
 	}
 
 	private void sendRaw(String line) throws IOException {
@@ -405,22 +410,19 @@ class StdioMcpTransportTests {
 	}
 
 	@Test
-	void closeFinishesEvenIfTheCallerStopsWaiting() throws Exception {
-		CountDownLatch listening = new CountDownLatch(1);
-		start(managerOf((transportContext, request) -> {
-			listening.countDown();
-			return Mono.never();
-		}));
-		CountDownLatch done = new CountDownLatch(1);
-		this.served.doFinally(s -> done.countDown()).subscribe();
+	void closeCancelsInFlightRequestsAndCompletesPromptly() throws Exception {
+		CountDownLatch started = new CountDownLatch(1);
+		AtomicBoolean cancelled = new AtomicBoolean();
+		start(managerOf((transportContext, request) -> Mono.<McpTransportResponse>never()
+			.doOnSubscribe(s -> started.countDown())
+			.doOnCancel(() -> cancelled.set(true))));
 
-		send("subscriptions/listen", 1, Map.of("_meta", meta()));
-		assertThat(listening.await(5, TimeUnit.SECONDS)).isTrue();
+		send("tools/call", 1, Map.of("_meta", meta()));
+		assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
 
-		// The never-ending request holds the grace period longer than the caller waits.
-		assertThatThrownBy(() -> this.transport.closeGracefully().block(Duration.ofMillis(100)))
-			.isInstanceOf(IllegalStateException.class);
-		assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
+		assertThatCode(() -> this.transport.closeGracefully().block(Duration.ofSeconds(1))).doesNotThrowAnyException();
+		await().atMost(Duration.ofSeconds(1)).untilTrue(cancelled);
+		assertThatCode(() -> this.done.asMono().block(Duration.ofSeconds(1))).doesNotThrowAnyException();
 	}
 
 	@Test
@@ -445,78 +447,63 @@ class StdioMcpTransportTests {
 		}
 	}
 
+	// stdio.md: "Servers SHOULD exit promptly when their standard input is closed or
+	// reads return end-of-file." EOF closes like closeGracefully: in-flight requests are
+	// cancelled.
 	@Test
-	void eofAnswersInFlightRequestsBeforeCompleting() throws Exception {
-		CountDownLatch release = new CountDownLatch(1);
-		McpRequestManager manager = managerOf((transportContext, request) -> Mono.fromCallable(() -> {
-			release.await(5, TimeUnit.SECONDS);
-			return JSONRPCResponse.result(request.id(), Map.of());
-		}).subscribeOn(Schedulers.boundedElastic()).map(McpTransportResponse::result));
-		start(manager);
+	void eofCancelsInFlightRequestsAndCompletesTheTransport() throws Exception {
+		CountDownLatch started = new CountDownLatch(1);
+		AtomicBoolean cancelled = new AtomicBoolean();
+		start(managerOf((transportContext, request) -> Mono.<McpTransportResponse>never()
+			.doOnSubscribe(s -> started.countDown())
+			.doOnCancel(() -> cancelled.set(true))));
 
 		send("tools/list", 4, Map.of("_meta", meta()));
-		Thread.sleep(300); // let dispatch register before stdin closes
+		assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
 		this.clientOut.close();
-		release.countDown();
 
-		Map<String, Object> response = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
-		assertThat(((Number) response.get("id")).intValue()).isEqualTo(4);
-		// Already closing after EOF, so this only awaits completion.
-		this.transport.closeGracefully().block(Duration.ofSeconds(5));
+		assertThatCode(() -> this.done.asMono().block(Duration.ofSeconds(1))).doesNotThrowAnyException();
+		await().atMost(Duration.ofSeconds(1)).untilTrue(cancelled);
 	}
 
 	@Test
-	void closeCompletesOnAThreadThatAllowsBlocking() throws Exception {
-		start(managerOf((transportContext, request) -> Mono.empty()));
-
-		this.transport.closeGracefully()
-			.then(Mono.fromRunnable(() -> Mono.delay(Duration.ofMillis(1)).block()))
-			.block(Duration.ofSeconds(5));
-	}
-
-	@Test
-	void requestDuringGracefulCloseIsRejected() throws Exception {
-		CountDownLatch listening = new CountDownLatch(1);
-		McpRequestManager manager = managerOf((transportContext, request) -> {
-			if ("subscriptions/listen".equals(request.method())) {
-				listening.countDown();
-				return Mono.never();
-			}
+	void requestAfterCloseIsNotHandled() throws Exception {
+		Set<Object> handled = ConcurrentHashMap.newKeySet();
+		start(managerOf((transportContext, request) -> {
+			handled.add(request.id());
 			return Mono.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of())));
-		});
-		start(manager);
+		}));
 
-		send("subscriptions/listen", 1, Map.of("_meta", meta()));
-		assertThat(listening.await(5, TimeUnit.SECONDS)).isTrue();
+		this.transport.closeGracefully().block(Duration.ofSeconds(1));
+		try {
+			send("tools/list", 2, Map.of("_meta", meta()));
+		}
+		catch (IOException ignored) {
+			// The reader may already be gone; either way the request must not be handled.
+		}
+		Thread.sleep(300);
 
-		// The never-ending listen stream holds the transport in its grace period.
-		this.transport.closeGracefully().subscribe();
-		send("tools/list", 2, Map.of("_meta", meta()));
-
-		Map<String, Object> response = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
-		assertThat(((Number) response.get("id")).intValue()).isEqualTo(2);
-		assertThat(((Number) ((Map<?, ?>) response.get("error")).get("code")).intValue())
-			.isEqualTo(ErrorCodes.INTERNAL_ERROR);
+		assertThat(handled).isEmpty();
 	}
 
 	@Test
-	void closeGracefullyEndsListenStreamsWithCompleteResult() throws Exception {
+	void closeGracefullyCancelsListenStreams() throws Exception {
+		AtomicBoolean feedCancelled = new AtomicBoolean();
+		McpChangeFeed feed = () -> Flux.<ServerChange>never().doOnCancel(() -> feedCancelled.set(true));
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(this.jsonMapper)
 			.feature(ToolsFeature.ofAsync(emptyTools(), this.jsonMapper, 0L, CacheScope.PRIVATE))
-			.subscriptions(McpChangeFeed.sink())
+			.subscriptions(feed)
 			.build();
 		start(server);
 
 		send("subscriptions/listen", 3, Map.of("_meta", meta(), "notifications", Map.of("toolsListChanged", true)));
 		assertThat(readLineWithTimeout()).contains("notifications/subscriptions/acknowledged");
 
-		this.transport.closeGracefully().block(Duration.ofSeconds(5));
+		this.transport.closeGracefully().block(Duration.ofSeconds(1));
 
-		Map<String, Object> closing = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
-		assertThat(((Number) closing.get("id")).intValue()).isEqualTo(3);
-		assertThat(closing.get("result")).isNotNull();
+		await().atMost(Duration.ofSeconds(1)).untilTrue(feedCancelled);
 	}
 
 	@Test
@@ -534,6 +521,89 @@ class StdioMcpTransportTests {
 
 		this.transport.closeGracefully().block();
 		assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+	}
+
+	// stdio.md: "Servers SHOULD exit promptly when their standard input is closed". A
+	// client that has stopped reading stdout leaves the writer blocked in a write to a
+	// PrintStream, as System.out is; close must not wait for that write.
+	@Test
+	void closeCompletesWhenTheClientStopsReadingStdout() throws Exception {
+		CountDownLatch handled = new CountDownLatch(1);
+		start(managerOf((transportContext, request) -> {
+			handled.countDown();
+			return Mono.just(McpTransportResponse
+				.result(JSONRPCResponse.result(request.id(), Map.of("payload", "x".repeat(8 * 1024)))));
+		}), this.jsonMapper, out -> new PrintStream(out, false, StandardCharsets.UTF_8));
+
+		send("tools/list", 1, Map.of("_meta", meta()));
+		assertThat(handled.await(5, TimeUnit.SECONDS)).isTrue();
+		Thread.sleep(200); // let the writer fill the pipe and block
+		try {
+			assertThatCode(() -> this.transport.closeGracefully().block(Duration.ofSeconds(10)))
+				.doesNotThrowAnyException();
+		}
+		finally {
+			// Unblock the writer so tearDown can finish if the assertion failed.
+			Thread drain = new Thread(() -> {
+				try {
+					while (this.serverResponses.read() != -1) {
+					}
+				}
+				catch (IOException ignored) {
+				}
+			});
+			drain.setDaemon(true);
+			drain.start();
+		}
+	}
+
+	// JSON-RPC 2.0, section 4: the server MUST reply to every request. A response
+	// stream that fails or ends before its terminal response must still answer it.
+	@Test
+	void requestWhoseResponseNeverArrivesIsAnsweredWithInternalError() throws Exception {
+		start(managerOf((transportContext, request) -> {
+			if (((Number) request.id()).intValue() == 6) {
+				return Mono.just(McpTransportResponse.streaming(Flux.concat(
+						Flux.just((JSONRPCMessage) new JSONRPCNotification("notifications/progress", Map.of())),
+						Flux.error(new IllegalStateException("boom")))));
+			}
+			return Mono.empty();
+		}));
+
+		send("tools/list", 6, Map.of("_meta", meta()));
+		assertThat(readLineWithTimeout()).contains("notifications/progress");
+		Map<String, Object> failed = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) failed.get("id")).intValue()).isEqualTo(6);
+		assertThat(errorCode(failed)).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+
+		send("tools/list", 7, Map.of("_meta", meta()));
+		Map<String, Object> empty = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) empty.get("id")).intValue()).isEqualTo(7);
+		assertThat(errorCode(empty)).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+	}
+
+	// Not spec-mandated, but follows from the same MUST-reply rule: a request manager
+	// that throws instead of returning a Mono must not leave the id stuck in flight,
+	// which would make every later request with that id be ignored.
+	@Test
+	void requestManagerThatThrowsDoesNotLeakTheRequestId() throws Exception {
+		AtomicBoolean thrown = new AtomicBoolean();
+		start(managerOf((transportContext, request) -> {
+			if (thrown.compareAndSet(false, true)) {
+				throw new IllegalStateException("boom");
+			}
+			return Mono.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of())));
+		}));
+
+		send("tools/list", 9, Map.of("_meta", meta()));
+		Map<String, Object> failed = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) failed.get("id")).intValue()).isEqualTo(9);
+		assertThat(errorCode(failed)).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+
+		send("tools/list", 9, Map.of("_meta", meta()));
+		Map<String, Object> retried = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) retried.get("id")).intValue()).isEqualTo(9);
+		assertThat(retried.get("error")).isNull();
 	}
 
 	private String readLineWithTimeout() throws IOException {

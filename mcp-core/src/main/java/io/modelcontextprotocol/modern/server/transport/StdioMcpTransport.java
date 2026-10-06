@@ -10,8 +10,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
@@ -27,7 +25,6 @@ import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse.JSONRPCError;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
-import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
@@ -43,16 +40,13 @@ import reactor.core.scheduler.Schedulers;
 /**
  * A newline-delimited stdio transport for a modern {@link McpRequestManager}: one
  * JSON-RPC message per line, no session. Requests are handled off the reading thread, so
- * a slow request does not delay others. Nothing else may write to the output stream; with
- * the default constructor, route all logging to stderr.
+ * a slow request does not delay others.
  *
  * @author Dariusz Jędrzejczyk
  */
 public class StdioMcpTransport {
 
 	private static final Logger logger = LoggerFactory.getLogger(StdioMcpTransport.class);
-
-	private static final Duration GRACE_PERIOD = Duration.ofSeconds(2);
 
 	private final McpRequestManager requestManager;
 
@@ -80,8 +74,6 @@ public class StdioMcpTransport {
 
 	private final AtomicBoolean closing = new AtomicBoolean();
 
-	private final AtomicBoolean shutDown = new AtomicBoolean();
-
 	public StdioMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper) {
 		this(requestManager, jsonMapper, System.in, System.out);
 	}
@@ -90,6 +82,8 @@ public class StdioMcpTransport {
 			OutputStream out) {
 		Assert.notNull(requestManager, "requestManager must not be null");
 		Assert.notNull(jsonMapper, "jsonMapper must not be null");
+		Assert.notNull(in, "in must not be null");
+		Assert.notNull(out, "out must not be null");
 		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.in = in;
@@ -116,61 +110,35 @@ public class StdioMcpTransport {
 	}
 
 	/**
-	 * Stop accepting requests and give in-flight ones a short grace period to finish
-	 * before ending them. If the request manager is a {@link McpServer}, active
-	 * {@code subscriptions/listen} streams end with their graceful {@code complete}
-	 * result. Completes once the transport has shut down; cancelling the returned Mono
-	 * does not stop the shutdown.
+	 * Stop reading and cancel all in-flight requests, including
+	 * {@code subscriptions/listen} streams, without sending their pending output.
+	 * Completes once the transport has shut down; cancelling the returned Mono does not
+	 * stop the shutdown.
 	 */
 	public Mono<Void> closeGracefully() {
 		return Mono.defer(() -> {
 			if (this.closing.compareAndSet(false, true)) {
-				beginClose();
+				Mono.fromRunnable(() -> {
+					this.inFlight.values().forEach(entry -> entry.subscription().dispose());
+					this.inFlight.clear();
+					this.readerScheduler.dispose();
+					this.writer.dispose();
+					this.writerScheduler.dispose();
+				})
+					.onErrorComplete()
+					.doFinally(ignored -> this.completion.tryEmitEmpty())
+					.subscribeOn(Schedulers.boundedElastic())
+					.subscribe();
 			}
 			return this.completion.asMono();
 		});
 	}
 
-	private void beginClose() {
-		if (this.requestManager instanceof McpServer server) {
-			server.closeGracefully();
-		}
-		List<Mono<Void>> pending = this.inFlight.values().stream().map(InFlight::done).toList();
-		// Subscribed here rather than returned: a caller that stops waiting, e.g. with
-		// block(timeout), would otherwise cancel the shutdown and leave the transport
-		// closing forever.
-		Mono.when(pending).timeout(GRACE_PERIOD, Mono.empty()).doFinally(signal -> shutdown()).subscribe();
-	}
-
-	private void shutdown() {
-		if (!this.shutDown.compareAndSet(false, true)) {
-			return;
-		}
-		this.closing.set(true);
-		this.inFlight.values().forEach(entry -> entry.subscription().dispose());
-		this.inFlight.clear();
-		// Queued behind all pending output, so it signals once that output is written.
-		Sinks.Empty<Void> drained = Sinks.empty();
-		this.writer.schedule(drained::tryEmitEmpty);
-		drained.asMono()
-			.timeout(GRACE_PERIOD, Mono.empty())
-			// Off the writer thread: it is disposed here, and completion subscribers
-			// must not run on a thread that rejects blocking.
-			.publishOn(Schedulers.boundedElastic())
-			.doFinally(signal -> {
-				this.writer.dispose();
-				this.readerScheduler.dispose();
-				this.writerScheduler.dispose();
-				this.completion.tryEmitEmpty();
-			})
-			.subscribe();
-	}
-
 	private void readLoop() {
 		try (BufferedReader reader = new BufferedReader(new InputStreamReader(this.in, StandardCharsets.UTF_8))) {
 			String line;
-			// Checked after each read: a line that arrives once shut down is dropped.
-			while ((line = reader.readLine()) != null && !this.shutDown.get()) {
+			// Checked after each read: a line that arrives once closing is dropped.
+			while ((line = reader.readLine()) != null && !this.closing.get()) {
 				if (line.isBlank()) {
 					continue;
 				}
@@ -187,14 +155,12 @@ public class StdioMcpTransport {
 		catch (IOException e) {
 			// Disposing the reader on shutdown interrupts a read on interruptible
 			// streams.
-			if (!this.shutDown.get()) {
+			if (!this.closing.get()) {
 				logger.warn("stdio read failed", e);
 			}
 		}
 		finally {
-			// The client may close stdin right after its last request and still read
-			// the responses, so EOF closes gracefully too.
-			closeGracefully().subscribe();
+			this.closeGracefully().subscribe();
 		}
 	}
 
@@ -247,8 +213,7 @@ public class StdioMcpTransport {
 		Object key = keyOf(request.id());
 		// Registered before subscribing: a request that completes synchronously removes
 		// its own entry in doFinally, which must not run before the put.
-		Sinks.Empty<Void> done = Sinks.empty();
-		InFlight entry = new InFlight(Disposables.swap(), done.asMono(), new AtomicBoolean());
+		InFlight entry = new InFlight(Disposables.swap(), new AtomicBoolean());
 		if (this.inFlight.putIfAbsent(key, entry) != null) {
 			// Not answered: an error carrying this id would be taken by the client as the
 			// response to the request still in flight.
@@ -259,24 +224,28 @@ public class StdioMcpTransport {
 		// so either it sees this entry or this sees the flag.
 		if (this.closing.get()) {
 			this.inFlight.remove(key, entry);
-			emit(JSONRPCResponse.error(request.id(),
-					new JSONRPCError(McpSchema.ErrorCodes.INTERNAL_ERROR, "Server is shutting down")));
 			return;
 		}
 
-		Flux<JSONRPCMessage> flux = this.requestManager.handle(McpTransportContext.EMPTY, request)
+		JSONRPCResponse internalError = JSONRPCResponse.error(request.id(),
+				new JSONRPCError(McpSchema.ErrorCodes.INTERNAL_ERROR, "Internal error"));
+
+		Flux<JSONRPCMessage> flux = Mono.defer(() -> this.requestManager.handle(McpTransportContext.EMPTY, request))
 			// Async handlers run on the subscribing thread; keep them off the reader so
 			// it can always read the next request or cancellation.
 			.subscribeOn(Schedulers.boundedElastic())
 			.flatMapMany(StdioMcpTransport::messages)
+			.defaultIfEmpty(internalError)
+			.onErrorReturn(e -> {
+				logger.warn("Unhandled error dispatching request {}", key, e);
+				return true;
+			}, internalError)
 			// Cancellation and shutdown dispose the subscription while an error may be
 			// on its way. A cancelled subscriber drops errors before any error consumer
 			// runs; onErrorComplete absorbs them even after cancellation.
-			.doOnError(err -> logger.warn("Unhandled error dispatching request {}", key, err))
 			.onErrorComplete();
 		entry.subscription().update(flux.doFinally(signal -> {
 			this.inFlight.remove(key, entry);
-			done.tryEmitEmpty();
 		}).subscribe(message -> {
 			// Freed before the response is queued: once the client has it, it may reuse
 			// the id while this subscription has yet to reach doFinally.
@@ -310,11 +279,6 @@ public class StdioMcpTransport {
 	}
 
 	private void emit(JSONRPCMessage message, InFlight request) {
-		// Output of requests that outlive shutdown has nowhere to go.
-		if (this.shutDown.get()) {
-			logger.debug("Dropping outbound message after shutdown: {}", message);
-			return;
-		}
 		try {
 			this.writer.schedule(() -> {
 				// Checked when written, not when queued: a cancellation must also stop
@@ -343,11 +307,13 @@ public class StdioMcpTransport {
 			this.out.flush();
 		}
 		catch (IOException | RuntimeException e) {
-			logger.warn("Failed to write outbound message", e);
+			if (!this.closing.get()) {
+				logger.warn("Failed to write outbound message", e);
+			}
 		}
 	}
 
-	private record InFlight(Disposable.Swap subscription, Mono<Void> done, AtomicBoolean cancelled) {
+	private record InFlight(Disposable.Swap subscription, AtomicBoolean cancelled) {
 	}
 
 }
