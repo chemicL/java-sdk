@@ -101,7 +101,7 @@ public final class ResourcesFeature implements McpFeature {
 
 	@Override
 	public void capabilities(ServerCapabilities.Builder builder) {
-		builder.resources(false, false);
+		builder.resources(this.repository.supportsSubscribe(), false);
 	}
 
 	@Override
@@ -141,6 +141,11 @@ public final class ResourcesFeature implements McpFeature {
 			public Mono<McpAsyncResponse<ReadResourceOutcome>> read(McpRequestContext ctx,
 					ReadResourceRequest request) {
 				return SyncAdapters.respond(ctx, () -> repository.read(ctx, request));
+			}
+
+			@Override
+			public boolean supportsSubscribe() {
+				return repository.supportsSubscribe();
 			}
 		};
 	}

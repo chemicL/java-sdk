@@ -42,7 +42,7 @@ import io.modelcontextprotocol.modern.McpSchema.ErrorCodes;
 import io.modelcontextprotocol.modern.server.McpTransportResponse;
 import io.modelcontextprotocol.modern.server.McpRequestManager;
 import io.modelcontextprotocol.modern.server.McpServer;
-import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.McpChangePublisher;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
@@ -488,13 +488,13 @@ class StdioMcpTransportTests {
 
 	@Test
 	void closeGracefullyCancelsListenStreams() throws Exception {
-		AtomicBoolean feedCancelled = new AtomicBoolean();
-		McpChangeFeed feed = () -> Flux.<ServerChange>never().doOnCancel(() -> feedCancelled.set(true));
+		AtomicBoolean publisherCancelled = new AtomicBoolean();
+		McpChangePublisher publisher = () -> Flux.<ServerChange>never().doOnCancel(() -> publisherCancelled.set(true));
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(this.jsonMapper)
 			.feature(ToolsFeature.ofAsync(emptyTools(), this.jsonMapper, 0L, CacheScope.PRIVATE))
-			.subscriptions(feed)
+			.subscriptions(publisher)
 			.build();
 		start(server);
 
@@ -503,7 +503,7 @@ class StdioMcpTransportTests {
 
 		this.transport.closeGracefully().block(Duration.ofSeconds(1));
 
-		await().atMost(Duration.ofSeconds(1)).untilTrue(feedCancelled);
+		await().atMost(Duration.ofSeconds(1)).untilTrue(publisherCancelled);
 	}
 
 	@Test

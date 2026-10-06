@@ -20,7 +20,7 @@ import io.modelcontextprotocol.modern.McpSchema.SubscriptionFilter;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsAcknowledgedParams;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsListenRequest;
 import io.modelcontextprotocol.modern.McpSchema.SubscriptionsListenResult;
-import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.McpChangePublisher;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.util.Assert;
 import reactor.core.publisher.Flux;
@@ -29,13 +29,13 @@ import reactor.core.publisher.Sinks;
 
 /**
  * The {@code subscriptions/listen} feature: acknowledges the honoured subset of the
- * requested filter, then forwards matching changes from a {@link McpChangeFeed}.
+ * requested filter, then forwards matching changes from a {@link McpChangePublisher}.
  *
  * @author Dariusz Jędrzejczyk
  */
 final class SubscriptionsFeature implements McpFeature {
 
-	private final McpChangeFeed feed;
+	private final McpChangePublisher publisher;
 
 	private final McpJsonMapper jsonMapper;
 
@@ -45,16 +45,19 @@ final class SubscriptionsFeature implements McpFeature {
 
 	private final boolean hasResources;
 
+	private final boolean hasResourcesSubscribe;
+
 	private final Sinks.Empty<Void> shutdown = Sinks.empty();
 
-	SubscriptionsFeature(McpChangeFeed feed, McpJsonMapper jsonMapper, boolean hasTools, boolean hasPrompts,
-			boolean hasResources) {
-		Assert.notNull(feed, "feed must not be null");
-		this.feed = feed;
+	SubscriptionsFeature(McpChangePublisher publisher, McpJsonMapper jsonMapper, boolean hasTools, boolean hasPrompts,
+			boolean hasResources, boolean hasResourcesSubscribe) {
+		Assert.notNull(publisher, "publisher must not be null");
+		this.publisher = publisher;
 		this.jsonMapper = jsonMapper;
 		this.hasTools = hasTools;
 		this.hasPrompts = hasPrompts;
 		this.hasResources = hasResources;
+		this.hasResourcesSubscribe = hasResourcesSubscribe;
 	}
 
 	void closeGracefully() {
@@ -89,7 +92,7 @@ final class SubscriptionsFeature implements McpFeature {
 			builder.promptsListChanged(true);
 		}
 		if (this.hasResources) {
-			builder.resourcesSubscribe(this.feed.supportsResourceUpdates(), true);
+			builder.resourcesSubscribe(this.hasResourcesSubscribe, true);
 		}
 	}
 
@@ -98,7 +101,7 @@ final class SubscriptionsFeature implements McpFeature {
 		Mono<Void> ack = notifier.notify(McpSchema.METHOD_NOTIFICATION_SUBSCRIPTIONS_ACKNOWLEDGED,
 				new SubscriptionsAcknowledgedParams(honoured, subscriptionMeta));
 
-		Flux<Void> forwardChanges = this.feed.changes()
+		Flux<Void> forwardChanges = this.publisher.changes()
 			.filter(change -> matches(change, honoured))
 			.takeUntilOther(this.shutdown.asMono())
 			.concatMap(change -> notifier.notify(methodFor(change), paramsFor(change, subscriptionMeta)));
@@ -111,8 +114,7 @@ final class SubscriptionsFeature implements McpFeature {
 		Boolean tools = (this.hasTools && requested.wantsToolsListChanged()) ? Boolean.TRUE : null;
 		Boolean prompts = (this.hasPrompts && requested.wantsPromptsListChanged()) ? Boolean.TRUE : null;
 		Boolean resources = (this.hasResources && requested.wantsResourcesListChanged()) ? Boolean.TRUE : null;
-		List<String> resourceSubs = (this.hasResources && this.feed.supportsResourceUpdates())
-				? requested.resourceSubscriptionsOrEmpty() : List.of();
+		List<String> resourceSubs = this.hasResourcesSubscribe ? requested.resourceSubscriptionsOrEmpty() : List.of();
 		return new SubscriptionFilter(tools, prompts, resources, resourceSubs.isEmpty() ? null : resourceSubs);
 	}
 

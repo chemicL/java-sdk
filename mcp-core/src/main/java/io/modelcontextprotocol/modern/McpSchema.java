@@ -469,6 +469,10 @@ public final class McpSchema {
 				return this.resources != null;
 			}
 
+			public boolean hasResourcesSubscribe() {
+				return this.resources != null && Boolean.TRUE.equals(this.resources.subscribe());
+			}
+
 			/** Sets {@code tools.listChanged}; a no-op unless tools are advertised. */
 			public Builder toolsListChanged(boolean listChanged) {
 				if (this.tools != null) {

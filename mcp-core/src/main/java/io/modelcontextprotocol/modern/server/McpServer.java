@@ -34,7 +34,7 @@ import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.McpSchema.UnsupportedProtocolVersionData;
-import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.McpChangePublisher;
 import io.modelcontextprotocol.util.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,7 +91,7 @@ public final class McpServer implements McpRequestManager {
 	/**
 	 * Ends every active {@code subscriptions/listen} stream with a graceful
 	 * {@code complete} result; streams opened afterwards end right after their
-	 * acknowledgment. A no-op if no {@link McpChangeFeed} was registered.
+	 * acknowledgment. A no-op if no {@link McpChangePublisher} was registered.
 	 */
 	public void closeGracefully() {
 		if (this.subscriptionsFeature != null) {
@@ -344,7 +344,7 @@ public final class McpServer implements McpRequestManager {
 
 		private RequestStateCodec requestStateCodec;
 
-		private McpChangeFeed changeFeed;
+		private McpChangePublisher changePublisher;
 
 		private Builder() {
 		}
@@ -383,12 +383,12 @@ public final class McpServer implements McpRequestManager {
 		}
 
 		/**
-		 * Registers {@code subscriptions/listen}, backed by {@code feed}, for the tools,
-		 * prompts and resources features that are registered.
+		 * Registers {@code subscriptions/listen}, backed by {@code publisher}, for the
+		 * tools, prompts and resources features that are registered.
 		 */
-		public Builder subscriptions(McpChangeFeed feed) {
-			Assert.notNull(feed, "feed must not be null");
-			this.changeFeed = feed;
+		public Builder subscriptions(McpChangePublisher publisher) {
+			Assert.notNull(publisher, "publisher must not be null");
+			this.changePublisher = publisher;
 			return this;
 		}
 
@@ -428,11 +428,16 @@ public final class McpServer implements McpRequestManager {
 			// subscriptions can honour depends on the registered primitives, and discover
 			// advertises the final capabilities.
 			SubscriptionsFeature subscriptionsFeature = null;
-			if (this.changeFeed != null) {
-				subscriptionsFeature = new SubscriptionsFeature(this.changeFeed, mapper, capabilitiesBuilder.hasTools(),
-						capabilitiesBuilder.hasPrompts(), capabilitiesBuilder.hasResources());
+			if (this.changePublisher != null) {
+				subscriptionsFeature = new SubscriptionsFeature(this.changePublisher, mapper,
+						capabilitiesBuilder.hasTools(), capabilitiesBuilder.hasPrompts(),
+						capabilitiesBuilder.hasResources(), capabilitiesBuilder.hasResourcesSubscribe());
 				subscriptionsFeature.capabilities(capabilitiesBuilder);
 				allFeatures.add(subscriptionsFeature);
+			}
+			else {
+				// resources/updated is only ever delivered over subscriptions/listen.
+				capabilitiesBuilder.resourcesSubscribe(false, false);
 			}
 			allFeatures.add(new DiscoverFeature(this.supportedVersions, capabilitiesBuilder.build(), this.instructions,
 					this.discoverTtlMs, this.discoverCacheScope));

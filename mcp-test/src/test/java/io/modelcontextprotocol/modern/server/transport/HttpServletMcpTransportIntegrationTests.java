@@ -38,7 +38,7 @@ import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
-import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.McpChangePublisher;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
@@ -104,13 +104,13 @@ class HttpServletMcpTransportIntegrationTests {
 			}
 		};
 
-		McpChangeFeed feed = () -> Flux.<ServerChange>never().doOnCancel(LISTEN_CANCELLED::countDown);
+		McpChangePublisher publisher = () -> Flux.<ServerChange>never().doOnCancel(LISTEN_CANCELLED::countDown);
 
 		McpServer server = McpServer.builder()
 			.serverInfo(Implementation.builder("modern-test-server", "1.0.0").build())
 			.jsonMapper(JSON_MAPPER)
 			.feature(ToolsFeature.ofAsync(repo))
-			.subscriptions(feed)
+			.subscriptions(publisher)
 			.build();
 
 		HttpServletMcpTransport transport = HttpServletMcpTransport.builder(server)

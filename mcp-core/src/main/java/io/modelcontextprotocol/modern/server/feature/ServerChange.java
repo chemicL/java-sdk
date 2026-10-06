@@ -5,8 +5,8 @@
 package io.modelcontextprotocol.modern.server.feature;
 
 /**
- * A change a {@link McpChangeFeed} may emit for {@code subscriptions/listen} to forward.
- * Types it does not recognize are not forwarded.
+ * A change a {@link McpChangePublisher} may emit for {@code subscriptions/listen} to
+ * forward. Types it does not recognize are not forwarded.
  *
  * @author Dariusz Jędrzejczyk
  */

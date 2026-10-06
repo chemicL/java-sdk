@@ -48,6 +48,7 @@ import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.McpSyncNotifier;
 import io.modelcontextprotocol.modern.server.McpSyncResponse;
 import io.modelcontextprotocol.modern.server.feature.CompletionsFeature;
+import io.modelcontextprotocol.modern.server.feature.McpChangeBroadcaster;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.McpSyncPromptRepository;
 import io.modelcontextprotocol.modern.server.feature.McpSyncResourceRepository;
@@ -58,7 +59,6 @@ import io.modelcontextprotocol.modern.server.feature.ResourceTemplatesPage;
 import io.modelcontextprotocol.modern.server.feature.ResourcesFeature;
 import io.modelcontextprotocol.modern.server.feature.ResourcesPage;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
-import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.modern.server.transport.HttpServletMcpTransport;
@@ -124,7 +124,7 @@ public class ModernConformanceServlet {
 		int port = Integer.getInteger("port", DEFAULT_PORT);
 		logger.info("Starting MCP Conformance Tests - Modern Servlet Server");
 
-		SinkChangeFeed changes = McpChangeFeed.sink();
+		McpChangeFeed changes = new McpChangeFeed();
 
 		McpServer mcpServer = McpServer.builder()
 			.serverInfo(Implementation.builder("mcp-modern-conformance-server", "1.0.0").build())
@@ -261,7 +261,7 @@ public class ModernConformanceServlet {
 
 		private final Map<String, ToolEntry> tools = new LinkedHashMap<>();
 
-		ConformanceTools(SinkChangeFeed changes) {
+		ConformanceTools(McpChangeBroadcaster changes) {
 			add("test_simple_text", "Returns simple text content for testing",
 					respond((ctx, req) -> text("This is a simple text response for testing.")));
 			add("test_image_content", "Returns image content for testing",
@@ -334,11 +334,11 @@ public class ModernConformanceServlet {
 			add("test_logging_tool", "Diagnostic logging validator tool",
 					stream((ctx, req, notifier) -> text("Logging evaluated")));
 			add("test_trigger_tool_change", "Emits a tools list-changed notification", respond((ctx, req) -> {
-				changes.emit(new ServerChange.ToolsListChanged());
+				changes.broadcast(new ServerChange.ToolsListChanged());
 				return text("Mutation triggered");
 			}));
 			add("test_trigger_prompt_change", "Emits a prompts list-changed notification", respond((ctx, req) -> {
-				changes.emit(new ServerChange.PromptsListChanged());
+				changes.broadcast(new ServerChange.PromptsListChanged());
 				return text("Mutation triggered");
 			}));
 
@@ -538,6 +538,11 @@ public class ModernConformanceServlet {
 				throw McpException.invalidParams("Unknown resource: " + uri, Map.of("uri", uri));
 			}
 			return McpSyncResponse.result(result);
+		}
+
+		@Override
+		public boolean supportsSubscribe() {
+			return true;
 		}
 
 		private static ReadResourceResult textResource(String uri, String text) {

@@ -30,8 +30,8 @@ import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.McpChangeFeed;
+import io.modelcontextprotocol.modern.server.feature.McpChangePublisher;
 import io.modelcontextprotocol.modern.server.feature.ServerChange;
-import io.modelcontextprotocol.modern.server.feature.SinkChangeFeed;
 import io.modelcontextprotocol.modern.server.feature.ToolsFeature;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
 import io.modelcontextprotocol.server.transport.TomcatTestUtil;
@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A {@code subscriptions/listen} client that stops reading never blocks the thread
- * emitting changes.
+ * broadcasting changes.
  */
 class HttpServletMcpTransportSlowClientIntegrationTests {
 
@@ -56,7 +56,7 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 
 	private static final McpJsonMapper JSON_MAPPER = McpJsonDefaults.getMapper();
 
-	private static final SinkChangeFeed SINK = McpChangeFeed.sink();
+	private static final McpChangeFeed FEED = new McpChangeFeed();
 
 	private static final CountDownLatch LISTEN_CANCELLED = new CountDownLatch(1);
 
@@ -64,7 +64,7 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 
 	@BeforeAll
 	static void startServer() {
-		McpChangeFeed feed = () -> SINK.changes().doOnCancel(LISTEN_CANCELLED::countDown);
+		McpChangePublisher publisher = () -> FEED.changes().doOnCancel(LISTEN_CANCELLED::countDown);
 		McpServer server = McpServer.builder()
 			.serverInfo(Implementation.builder("slow-client-test-server", "1.0.0").build())
 			.jsonMapper(JSON_MAPPER)
@@ -79,7 +79,7 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 					return Mono.error(McpException.invalidParams("Unknown tool: " + request.name()));
 				}
 			}))
-			.subscriptions(feed)
+			.subscriptions(publisher)
 			.build();
 		HttpServletMcpTransport transport = HttpServletMcpTransport.builder(server)
 			.jsonMapper(JSON_MAPPER)
@@ -103,7 +103,7 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 	}
 
 	@Test
-	void emitDoesNotBlockOnAClientThatStoppedReading() throws Exception {
+	void broadcastDoesNotBlockOnAClientThatStoppedReading() throws Exception {
 		Map<String, Object> meta = new HashMap<>();
 		meta.put(MetaKeys.PROTOCOL_VERSION, McpSchema.LATEST_PROTOCOL_VERSION);
 		meta.put(MetaKeys.CLIENT_CAPABILITIES, Map.of());
@@ -134,12 +134,12 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 
 			// The client reads nothing more. Tens of megabytes of notifications fill
 			// every socket buffer on the way, after which a blocking write would hang.
-			CompletableFuture<Void> emitting = CompletableFuture.runAsync(() -> {
+			CompletableFuture<Void> broadcasting = CompletableFuture.runAsync(() -> {
 				for (int i = 0; i < 200_000; i++) {
-					SINK.emit(new ServerChange.ToolsListChanged());
+					FEED.broadcast(new ServerChange.ToolsListChanged());
 				}
 			});
-			emitting.get(10, TimeUnit.SECONDS);
+			broadcasting.get(10, TimeUnit.SECONDS);
 		}
 
 		assertThat(LISTEN_CANCELLED.await(10, TimeUnit.SECONDS)).isTrue();

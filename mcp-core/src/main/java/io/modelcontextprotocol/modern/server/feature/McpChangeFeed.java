@@ -4,30 +4,43 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
 /**
- * A hot source of {@link ServerChange}s for {@code subscriptions/listen} to forward. Each
- * subscriber (one per active listen stream) sees changes from the moment it subscribes
- * onward.
+ * An {@link McpChangeBroadcaster} and the {@link McpChangePublisher} its changes reach. A
+ * change broadcast while no listen stream is active is dropped.
  *
  * @author Dariusz Jędrzejczyk
  */
-public interface McpChangeFeed {
+public final class McpChangeFeed implements McpChangePublisher, McpChangeBroadcaster {
 
-	Flux<ServerChange> changes();
+	private static final Logger logger = LoggerFactory.getLogger(McpChangeFeed.class);
 
-	/** Whether this feed can report {@code resources/updated} for a given uri. */
-	default boolean supportsResourceUpdates() {
-		return true;
+	// directBestEffort neither buffers changes nobody listens to nor terminates when the
+	// last listener leaves, unlike onBackpressureBuffer's warm-up buffer and autoCancel.
+	private final Sinks.Many<ServerChange> sink = Sinks.many().multicast().directBestEffort();
+
+	@Override
+	public void broadcast(ServerChange change) {
+		// Multicast sinks reject concurrent producers, so a contended broadcast retries
+		// until the other one is done; that one only hands its change to each listener's
+		// own buffer. Not emitNext: it answers FAIL_OVERFLOW by erroring the sink, which
+		// would end every listen stream for good.
+		Sinks.EmitResult result;
+		while ((result = this.sink.tryEmitNext(change)) == Sinks.EmitResult.FAIL_NON_SERIALIZED) {
+			Thread.onSpinWait();
+		}
+		if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
+			logger.warn("Failed to broadcast change {}: {}", change, result);
+		}
 	}
 
-	/**
-	 * A non-reactive entry point: {@code emit(...)} pushes a change to every active
-	 * listen stream.
-	 */
-	static SinkChangeFeed sink() {
-		return new SinkChangeFeed();
+	@Override
+	public Flux<ServerChange> changes() {
+		return this.sink.asFlux();
 	}
 
 }

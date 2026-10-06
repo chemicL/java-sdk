@@ -17,13 +17,13 @@ import reactor.core.Disposable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class SinkChangeFeedTests {
+class McpChangeFeedTests {
 
 	@Test
 	void concurrentEmittersLoseNoChanges() throws Exception {
 		int threads = 8;
 		int perThread = 10_000;
-		SinkChangeFeed feed = McpChangeFeed.sink();
+		McpChangeFeed feed = new McpChangeFeed();
 		AtomicInteger received = new AtomicInteger();
 		Disposable listener = feed.changes().subscribe(change -> received.incrementAndGet());
 
@@ -35,7 +35,7 @@ class SinkChangeFeedTests {
 				emitters.add(executor.submit(() -> {
 					start.await();
 					for (int i = 0; i < perThread; i++) {
-						feed.emit(new ServerChange.ToolsListChanged());
+						feed.broadcast(new ServerChange.ToolsListChanged());
 					}
 					return null;
 				}));

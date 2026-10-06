@@ -26,4 +26,9 @@ public interface McpSyncResourceRepository {
 
 	McpSyncResponse<ReadResourceOutcome> read(McpRequestContext ctx, ReadResourceRequest request);
 
+	/** See {@link McpAsyncResourceRepository#supportsSubscribe()}. */
+	default boolean supportsSubscribe() {
+		return false;
+	}
+
 }

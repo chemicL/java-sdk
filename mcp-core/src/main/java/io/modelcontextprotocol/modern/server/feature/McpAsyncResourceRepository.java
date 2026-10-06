@@ -33,4 +33,12 @@ public interface McpAsyncResourceRepository {
 	 */
 	Mono<McpAsyncResponse<ReadResourceOutcome>> read(McpRequestContext ctx, ReadResourceRequest request);
 
+	/**
+	 * Whether {@code resources/updated} is reported for individual resources, advertised
+	 * as {@code resources.subscribe} when {@code subscriptions/listen} is registered.
+	 */
+	default boolean supportsSubscribe() {
+		return false;
+	}
+
 }
