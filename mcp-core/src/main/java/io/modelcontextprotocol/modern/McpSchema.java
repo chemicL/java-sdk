@@ -2453,8 +2453,7 @@ public final class McpSchema {
 		@JsonProperty("readOnlyHint") Boolean readOnlyHint,
 		@JsonProperty("destructiveHint") Boolean destructiveHint,
 		@JsonProperty("idempotentHint") Boolean idempotentHint,
-		@JsonProperty("openWorldHint") Boolean openWorldHint,
-		@JsonProperty("returnDirect") Boolean returnDirect) { // @formatter:on
+		@JsonProperty("openWorldHint") Boolean openWorldHint) { // @formatter:on
 
 		public static Builder builder() {
 			return new Builder();
@@ -2471,8 +2470,6 @@ public final class McpSchema {
 			private Boolean idempotentHint;
 
 			private Boolean openWorldHint;
-
-			private Boolean returnDirect;
 
 			public Builder title(String title) {
 				this.title = title;
@@ -2499,14 +2496,8 @@ public final class McpSchema {
 				return this;
 			}
 
-			public Builder returnDirect(Boolean returnDirect) {
-				this.returnDirect = returnDirect;
-				return this;
-			}
-
 			public ToolAnnotations build() {
-				return new ToolAnnotations(title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint,
-						returnDirect);
+				return new ToolAnnotations(title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint);
 			}
 
 		}
