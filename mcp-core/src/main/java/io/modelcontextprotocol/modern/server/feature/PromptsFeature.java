@@ -4,7 +4,6 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
-import java.util.Optional;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -78,18 +77,12 @@ public final class PromptsFeature implements McpFeature {
 	@Override
 	public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
 		if (McpSchema.METHOD_PROMPTS_LIST.equals(ctx.method())) {
-			Optional<PaginatedRequest> request = Params.decode(this.jsonMapper, params, PaginatedRequest.class);
-			if (request.isEmpty()) {
-				return Params.malformed(PaginatedRequest.class);
-			}
-			return this.repository.list(ctx, request.get().cursor())
+			return Params.decode(this.jsonMapper, params, PaginatedRequest.class)
+				.flatMap(request -> this.repository.list(ctx, request.cursor()))
 				.map(page -> McpAsyncResponse.result(toListResult(page)));
 		}
-		Optional<GetPromptRequest> request = Params.decode(this.jsonMapper, params, GetPromptRequest.class);
-		if (request.isEmpty()) {
-			return Params.malformed(GetPromptRequest.class);
-		}
-		return this.repository.get(ctx, request.get());
+		return Params.decode(this.jsonMapper, params, GetPromptRequest.class)
+			.flatMap(request -> this.repository.get(ctx, request));
 	}
 
 	@Override

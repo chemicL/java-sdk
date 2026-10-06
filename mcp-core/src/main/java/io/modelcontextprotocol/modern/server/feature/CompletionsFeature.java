@@ -5,7 +5,6 @@
 package io.modelcontextprotocol.modern.server.feature;
 
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -67,11 +66,9 @@ public final class CompletionsFeature implements McpFeature {
 		if (!(params instanceof Map<?, ?> map) || map.get("ref") == null) {
 			return Mono.error(McpException.invalidParams("params.ref is required"));
 		}
-		Optional<CompleteRequest> request = Params.decode(this.jsonMapper, params, CompleteRequest.class);
-		if (request.isEmpty()) {
-			return Params.malformed(CompleteRequest.class);
-		}
-		return this.repository.complete(ctx, request.get()).map(McpAsyncResponse::result);
+		return Params.decode(this.jsonMapper, params, CompleteRequest.class)
+			.flatMap(request -> this.repository.complete(ctx, request))
+			.map(McpAsyncResponse::result);
 	}
 
 	@Override

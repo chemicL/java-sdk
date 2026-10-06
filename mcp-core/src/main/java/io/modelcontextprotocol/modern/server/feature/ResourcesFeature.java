@@ -4,7 +4,6 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
-import java.util.Optional;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
@@ -81,21 +80,15 @@ public final class ResourcesFeature implements McpFeature {
 	@Override
 	public Mono<? extends McpAsyncResponse<? extends Result>> handle(McpRequestContext ctx, Object params) {
 		if (McpSchema.METHOD_RESOURCES_READ.equals(ctx.method())) {
-			Optional<ReadResourceRequest> request = Params.decode(this.jsonMapper, params, ReadResourceRequest.class);
-			if (request.isEmpty()) {
-				return Params.malformed(ReadResourceRequest.class);
-			}
-			return this.repository.read(ctx, request.get());
+			return Params.decode(this.jsonMapper, params, ReadResourceRequest.class)
+				.flatMap(request -> this.repository.read(ctx, request));
 		}
-		Optional<PaginatedRequest> request = Params.decode(this.jsonMapper, params, PaginatedRequest.class);
-		if (request.isEmpty()) {
-			return Params.malformed(PaginatedRequest.class);
-		}
+		Mono<PaginatedRequest> request = Params.decode(this.jsonMapper, params, PaginatedRequest.class);
 		if (McpSchema.METHOD_RESOURCES_LIST.equals(ctx.method())) {
-			return this.repository.list(ctx, request.get().cursor())
+			return request.flatMap(r -> this.repository.list(ctx, r.cursor()))
 				.map(page -> McpAsyncResponse.result(toListResult(page)));
 		}
-		return this.repository.listTemplates(ctx, request.get().cursor())
+		return request.flatMap(r -> this.repository.listTemplates(ctx, r.cursor()))
 			.map(page -> McpAsyncResponse.result(toListTemplatesResult(page)));
 	}
 

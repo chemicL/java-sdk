@@ -4,8 +4,6 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
-import java.util.Optional;
-
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.modern.McpException;
 import org.slf4j.Logger;
@@ -19,18 +17,14 @@ final class Params {
 	private Params() {
 	}
 
-	static <T> Optional<T> decode(McpJsonMapper jsonMapper, Object params, Class<T> type) {
+	static <T> Mono<T> decode(McpJsonMapper jsonMapper, Object params, Class<T> type) {
 		try {
-			return Optional.of(jsonMapper.convertValue(params, type));
+			return Mono.just(jsonMapper.convertValue(params, type));
 		}
 		catch (RuntimeException ex) {
 			logger.debug("Malformed params for {}", type.getSimpleName(), ex);
-			return Optional.empty();
+			return Mono.error(McpException.invalidParams("Malformed " + type.getSimpleName()));
 		}
-	}
-
-	static <O> Mono<O> malformed(Class<?> type) {
-		return Mono.error(McpException.invalidParams("Malformed " + type.getSimpleName()));
 	}
 
 }
