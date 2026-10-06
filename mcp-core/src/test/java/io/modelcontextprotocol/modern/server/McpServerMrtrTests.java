@@ -204,6 +204,48 @@ class McpServerMrtrTests {
 		assertThat((String) result.get("cacheScope")).isEqualToIgnoringCase("private");
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void resourceRequestStateIsBoundToTheUriNotAStrayName() {
+		AtomicReference<String> seenRequestState = new AtomicReference<>();
+		McpAsyncResourceRepository repo = new McpAsyncResourceRepository() {
+			@Override
+			public Mono<ResourcesPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ResourcesPage.of(List.of()));
+			}
+
+			@Override
+			public Mono<McpAsyncResponse<McpSchema.ReadResourceOutcome>> read(McpRequestContext ctx,
+					McpSchema.ReadResourceRequest request) {
+				if (request.requestState() != null) {
+					seenRequestState.set(request.requestState());
+					return Mono.just(McpAsyncResponse.result(ReadResourceResult.builder(List.of()).build()));
+				}
+				return Mono.just(McpAsyncResponse
+					.result(InputRequiredResult.builder().elicit("q1", CONFIRM).requestState("for-a").build()));
+			}
+		};
+		McpServer server = baseBuilder()
+			.feature(ResourcesFeature.ofAsync(repo, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.build();
+
+		Map<String, Object> first = new HashMap<>();
+		first.put("_meta", metaWithElicitation());
+		first.put("uri", "file:///a.txt");
+		JSONRPCResponse sealedResponse = respond(server, new JSONRPCRequest("resources/read", 1, first)).block();
+		String sealed = (String) ((Map<String, Object>) sealedResponse.result()).get("requestState");
+
+		Map<String, Object> replay = new HashMap<>();
+		replay.put("_meta", metaWithElicitation());
+		replay.put("uri", "file:///b.txt");
+		replay.put("name", "file:///a.txt");
+		replay.put("requestState", sealed);
+		JSONRPCResponse response = respond(server, new JSONRPCRequest("resources/read", 2, replay)).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS);
+		assertThat(seenRequestState.get()).isNull();
+	}
+
 	// An extension method's own input-required record, as an extension would declare it.
 	record ExtensionInputRequired(Map<String, InputRequest> inputRequests, String requestState, String resultType,
 			Map<String, Object> meta) implements InputRequired {

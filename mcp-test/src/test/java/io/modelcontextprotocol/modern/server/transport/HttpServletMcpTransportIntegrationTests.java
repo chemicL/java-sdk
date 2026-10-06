@@ -374,6 +374,19 @@ class HttpServletMcpTransportIntegrationTests {
 	}
 
 	@Test
+	void mcpNameIsCheckedAgainstTheUriOfAResourceRead() throws Exception {
+		Map<String, Object> params = new HashMap<>();
+		params.put("_meta", meta());
+		params.put("uri", "file:///b.txt");
+		params.put("name", "file:///a.txt");
+		HttpRequest request = post("resources/read", params).header("Mcp-Name", "file:///a.txt").build();
+		HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+		assertThat(response.statusCode()).isEqualTo(400);
+		assertThat(errorCode(response)).isEqualTo(ErrorCodes.HEADER_MISMATCH);
+	}
+
+	@Test
 	void missingMcpNameIsRejectedForNonAsciiName() throws Exception {
 		Map<String, Object> params = new HashMap<>();
 		params.put("_meta", meta());

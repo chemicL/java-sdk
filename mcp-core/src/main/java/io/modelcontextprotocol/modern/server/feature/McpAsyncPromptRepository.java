@@ -18,6 +18,10 @@ import reactor.core.publisher.Mono;
  */
 public interface McpAsyncPromptRepository {
 
+	/**
+	 * List (a page of) the prompts. An unrecognized cursor is an
+	 * {@link McpException#invalidParams(String) invalid-params error}.
+	 */
 	Mono<PromptsPage> list(McpRequestContext ctx, String cursor);
 
 	/**

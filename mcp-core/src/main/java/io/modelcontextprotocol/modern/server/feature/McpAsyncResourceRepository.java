@@ -20,6 +20,11 @@ import reactor.core.publisher.Mono;
  */
 public interface McpAsyncResourceRepository {
 
+	/**
+	 * List (a page of) the resources. An unrecognized cursor is an
+	 * {@link McpException#invalidParams(String) invalid-params error}; the same holds for
+	 * {@link #listTemplates}.
+	 */
 	Mono<ResourcesPage> list(McpRequestContext ctx, String cursor);
 
 	default Mono<ResourceTemplatesPage> listTemplates(McpRequestContext ctx, String cursor) {

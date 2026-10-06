@@ -167,7 +167,8 @@ public final class McpServer implements McpRequestManager {
 		boolean retry = paramsMap.get("inputResponses") != null || paramsMap.get("requestState") != null;
 
 		McpRequestContext ctx = new McpRequestContext(id, request.method(), protocolVersion, clientCapabilities,
-				clientInfo, progressToken, extractPrimitiveName(paramsMap), meta, transportContext, retry, blocking);
+				clientInfo, progressToken, extractPrimitiveName(request.method(), paramsMap), meta, transportContext,
+				retry, blocking);
 
 		Map<String, Object> params = paramsMap;
 		Object inputResponses = paramsMap.get("inputResponses");
@@ -311,16 +312,15 @@ public final class McpServer implements McpRequestManager {
 		return null;
 	}
 
-	private static String extractPrimitiveName(Map<String, Object> paramsMap) {
-		Object name = paramsMap.get("name");
-		if (name instanceof String s) {
-			return s;
-		}
-		Object uri = paramsMap.get("uri");
-		if (uri instanceof String s) {
-			return s;
-		}
-		return null;
+	private static String extractPrimitiveName(String method, Map<String, Object> paramsMap) {
+		// Keyed by method: a stray "name" on resources/read must not stand in for its
+		// uri, or state sealed for one resource would open for another.
+		String key = switch (method) {
+			case McpSchema.METHOD_TOOLS_CALL, McpSchema.METHOD_PROMPTS_GET -> "name";
+			case McpSchema.METHOD_RESOURCES_READ -> "uri";
+			default -> null;
+		};
+		return key != null && paramsMap.get(key) instanceof String s ? s : null;
 	}
 
 	/**

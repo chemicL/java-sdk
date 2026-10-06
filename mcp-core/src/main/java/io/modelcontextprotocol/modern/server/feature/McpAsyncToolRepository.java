@@ -20,7 +20,8 @@ public interface McpAsyncToolRepository {
 
 	/**
 	 * List (a page of) the tools this repository exposes. Must be deterministically
-	 * ordered and must not vary by connection.
+	 * ordered and must not vary by connection. An unrecognized cursor is an
+	 * {@link McpException#invalidParams(String) invalid-params error}.
 	 */
 	Mono<ToolsPage> list(McpRequestContext ctx, String cursor);
 

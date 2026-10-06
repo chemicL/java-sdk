@@ -24,22 +24,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CompletionsFeatureTests {
 
+	private static final McpServer SERVER = McpServer.builder()
+		.serverInfo(SERVER_INFO)
+		.jsonMapper(new GsonMcpJsonMapper())
+		.feature(
+				CompletionsFeature.ofAsync(
+						(McpAsyncCompletionRepository) (ctx, request) -> Mono
+							.just(CompleteResult.of(new CompleteResult.Completion(List.of()))),
+						new GsonMcpJsonMapper()))
+		.build();
+
 	@Test
 	void missingRefIsRejectedAsInvalidParams() {
-		McpServer server = McpServer.builder()
-			.serverInfo(SERVER_INFO)
-			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(
-					CompletionsFeature.ofAsync(
-							(McpAsyncCompletionRepository) (ctx, request) -> Mono
-								.just(CompleteResult.of(new CompleteResult.Completion(List.of()))),
-							new GsonMcpJsonMapper()))
-			.build();
-		Map<String, Object> meta = meta();
 		JSONRPCRequest request = new JSONRPCRequest(McpSchema.METHOD_COMPLETION_COMPLETE, 1,
-				Map.of("_meta", meta, "argument", Map.of("name", "a", "value", "v")));
+				Map.of("_meta", meta(), "argument", Map.of("name", "a", "value", "v")));
 
-		StepVerifier.create(respond(server, request))
+		StepVerifier.create(respond(SERVER, request))
+			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
+			.verifyComplete();
+	}
+
+	@Test
+	void missingArgumentIsRejectedAsInvalidParams() {
+		JSONRPCRequest request = new JSONRPCRequest(McpSchema.METHOD_COMPLETION_COMPLETE, 1,
+				Map.of("_meta", meta(), "ref", Map.of("type", "ref/prompt", "name", "p")));
+
+		StepVerifier.create(respond(SERVER, request))
 			.assertNext(response -> assertThat(response.error().code()).isEqualTo(ErrorCodes.INVALID_PARAMS))
 			.verifyComplete();
 	}

@@ -404,22 +404,15 @@ public class HttpServletMcpTransport extends HttpServlet {
 			}
 		}
 
-		boolean nameRequired = McpSchema.METHOD_TOOLS_CALL.equals(jsonRpcRequest.method())
-				|| McpSchema.METHOD_RESOURCES_READ.equals(jsonRpcRequest.method())
-				|| McpSchema.METHOD_PROMPTS_GET.equals(jsonRpcRequest.method());
-		if (!nameRequired) {
+		String nameKey = switch (jsonRpcRequest.method()) {
+			case McpSchema.METHOD_TOOLS_CALL, McpSchema.METHOD_PROMPTS_GET -> "name";
+			case McpSchema.METHOD_RESOURCES_READ -> "uri";
+			default -> null;
+		};
+		if (nameKey == null || !(jsonRpcRequest.params() instanceof Map<?, ?> paramsMap)) {
 			return null;
 		}
-
-		Object paramsObj = jsonRpcRequest.params();
-		if (!(paramsObj instanceof Map<?, ?> paramsMap)) {
-			return null;
-		}
-		Object expected = paramsMap.get("name");
-		if (expected == null) {
-			expected = paramsMap.get("uri");
-		}
-		if (!(expected instanceof String expectedName)) {
+		if (!(paramsMap.get(nameKey) instanceof String expectedName)) {
 			return null;
 		}
 		String nameHeader = request.getHeader("Mcp-Name");
