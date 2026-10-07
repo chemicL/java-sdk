@@ -474,6 +474,12 @@ public class ModernConformanceServlet {
 		}
 
 		@Override
+		public Tool find(McpRequestContext ctx, String name) {
+			ToolEntry entry = this.tools.get(name);
+			return entry != null ? entry.tool() : null;
+		}
+
+		@Override
 		public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
 			ToolEntry entry = this.tools.get(request.name());
 			if (entry == null) {
@@ -641,6 +647,12 @@ public class ModernConformanceServlet {
 		@Override
 		public PromptsPage list(McpRequestContext ctx, String cursor) {
 			return PromptsPage.of(this.prompts.values().stream().map(PromptEntry::prompt).toList());
+		}
+
+		@Override
+		public Prompt find(McpRequestContext ctx, String name) {
+			PromptEntry entry = this.prompts.get(name);
+			return entry != null ? entry.prompt() : null;
 		}
 
 		@Override

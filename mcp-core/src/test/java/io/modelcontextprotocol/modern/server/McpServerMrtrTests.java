@@ -33,6 +33,7 @@ import io.modelcontextprotocol.spec.json.gson.GsonMcpJsonMapper;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.PERMISSIVE_VALIDATOR;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.invoke;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
@@ -73,7 +74,7 @@ class McpServerMrtrTests {
 			}
 			return Mono.just(McpAsyncResponse
 				.result(InputRequiredResult.builder().elicit("q1", CONFIRM).requestState("secret-plaintext").build()));
-		}), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE)).build();
+		}), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE)).build();
 	}
 
 	@Test
@@ -138,7 +139,7 @@ class McpServerMrtrTests {
 		McpServer server = baseBuilder().feature(ToolsFeature.ofAsync(tools((ctx, req) -> {
 			InputResponses.get(req.inputResponses(), "q1", ElicitAnswer.class, new GsonMcpJsonMapper());
 			return Mono.just(McpAsyncResponse.result(CallToolResult.builder().build()));
-		}), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE)).build();
+		}), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE)).build();
 		JSONRPCRequest request = toolCall(1, metaWithElicitation(), null);
 		((Map<String, Object>) request.params()).put("inputResponses",
 				Map.of("q1", Map.of("action", "accept", "content", "not-an-object")));
@@ -161,7 +162,7 @@ class McpServerMrtrTests {
 							tools((ctx,
 									req) -> Mono.just(McpAsyncResponse
 										.result(InputRequiredResult.builder().elicit("q1", CONFIRM).build()))),
-							new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+							new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE))
 			.build();
 
 		JSONRPCResponse response = respond(server, toolCall(1, meta(), null)).block();

@@ -53,6 +53,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.PERMISSIVE_VALIDATOR;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
@@ -493,7 +494,7 @@ class StdioMcpTransportTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(this.jsonMapper)
-			.feature(ToolsFeature.ofAsync(emptyTools(), this.jsonMapper, 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), this.jsonMapper, PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE))
 			.subscriptions(publisher)
 			.build();
 		start(server);

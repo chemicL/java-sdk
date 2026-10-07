@@ -4,16 +4,20 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.Map;
 import java.util.Set;
 
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.modern.McpException;
 import io.modelcontextprotocol.modern.McpSchema;
 import io.modelcontextprotocol.modern.McpSchema.CacheScope;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptOutcome;
 import io.modelcontextprotocol.modern.McpSchema.GetPromptRequest;
 import io.modelcontextprotocol.modern.McpSchema.ListPromptsResult;
 import io.modelcontextprotocol.modern.McpSchema.PaginatedRequest;
+import io.modelcontextprotocol.modern.McpSchema.Prompt;
+import io.modelcontextprotocol.modern.McpSchema.PromptArgument;
 import io.modelcontextprotocol.modern.McpSchema.Result;
 import io.modelcontextprotocol.modern.McpSchema.ServerCapabilities;
 import io.modelcontextprotocol.modern.server.McpFeature;
@@ -82,7 +86,22 @@ public final class PromptsFeature implements McpFeature {
 				.map(page -> McpAsyncResponse.result(toListResult(page)));
 		}
 		return Params.decode(this.jsonMapper, params, GetPromptRequest.class)
-			.flatMap(request -> this.repository.get(ctx, request));
+			.flatMap(request -> this.repository.find(ctx, request.name())
+				.switchIfEmpty(Mono.error(() -> McpException.invalidParams("Unknown prompt: " + request.name())))
+				.flatMap(prompt -> get(ctx, prompt, request)));
+	}
+
+	private Mono<McpAsyncResponse<GetPromptOutcome>> get(McpRequestContext ctx, Prompt prompt,
+			GetPromptRequest request) {
+		if (prompt.arguments() != null) {
+			Map<String, String> arguments = request.arguments() != null ? request.arguments() : Map.of();
+			for (PromptArgument argument : prompt.arguments()) {
+				if (Boolean.TRUE.equals(argument.required()) && arguments.get(argument.name()) == null) {
+					return Mono.error(McpException.invalidParams("Missing required argument: " + argument.name()));
+				}
+			}
+		}
+		return this.repository.get(ctx, request);
 	}
 
 	@Override
@@ -108,6 +127,11 @@ public final class PromptsFeature implements McpFeature {
 			@Override
 			public Mono<PromptsPage> list(McpRequestContext ctx, String cursor) {
 				return SyncAdapters.call(ctx, () -> repository.list(ctx, cursor));
+			}
+
+			@Override
+			public Mono<Prompt> find(McpRequestContext ctx, String name) {
+				return SyncAdapters.call(ctx, () -> repository.find(ctx, name));
 			}
 
 			@Override

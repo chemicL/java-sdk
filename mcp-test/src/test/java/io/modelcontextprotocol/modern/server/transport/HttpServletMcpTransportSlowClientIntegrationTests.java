@@ -25,6 +25,7 @@ import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.McpAsyncResponse;
 import io.modelcontextprotocol.modern.server.McpRequestContext;
 import io.modelcontextprotocol.modern.server.McpServer;
@@ -72,6 +73,11 @@ class HttpServletMcpTransportSlowClientIntegrationTests {
 				@Override
 				public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
 					return Mono.just(ToolsPage.of(List.of()));
+				}
+
+				@Override
+				public Mono<Tool> find(McpRequestContext ctx, String name) {
+					return Mono.empty();
 				}
 
 				@Override

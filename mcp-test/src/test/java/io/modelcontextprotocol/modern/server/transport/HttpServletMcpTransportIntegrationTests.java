@@ -84,6 +84,12 @@ class HttpServletMcpTransportIntegrationTests {
 			}
 
 			@Override
+			public Mono<Tool> find(McpRequestContext ctx, String name) {
+				return "does-not-exist".equals(name) ? Mono.empty()
+						: Mono.just(Tool.builder(name, ToolsUtils.EMPTY_JSON_SCHEMA).build());
+			}
+
+			@Override
 			public Mono<McpAsyncResponse<CallToolOutcome>> call(McpRequestContext ctx, CallToolRequest request) {
 				McpAsyncResponse<CallToolOutcome> response = switch (request.name()) {
 					case "echo" -> McpAsyncResponse.result(text("echo:" + request.name()));

@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.function.BiFunction;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.json.schema.JsonSchemaValidator;
+import io.modelcontextprotocol.json.schema.JsonSchemaValidator.ValidationResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCResponse;
 import io.modelcontextprotocol.modern.McpException;
@@ -18,8 +20,10 @@ import io.modelcontextprotocol.modern.McpSchema.CallToolOutcome;
 import io.modelcontextprotocol.modern.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.modern.McpSchema.Implementation;
 import io.modelcontextprotocol.modern.McpSchema.MetaKeys;
+import io.modelcontextprotocol.modern.McpSchema.Tool;
 import io.modelcontextprotocol.modern.server.feature.McpAsyncToolRepository;
 import io.modelcontextprotocol.modern.server.feature.ToolsPage;
+import io.modelcontextprotocol.util.ToolsUtils;
 import reactor.core.publisher.Mono;
 
 /**
@@ -28,6 +32,10 @@ import reactor.core.publisher.Mono;
 public final class ModernTestFixtures {
 
 	public static final Implementation SERVER_INFO = Implementation.builder("test-server", "1.0.0").build();
+
+	/** Accepts any content against any schema. */
+	public static final JsonSchemaValidator PERMISSIVE_VALIDATOR = (schema, content) -> ValidationResponse
+		.asValid(null);
 
 	private ModernTestFixtures() {
 	}
@@ -62,7 +70,8 @@ public final class ModernTestFixtures {
 	}
 
 	/**
-	 * A tool repository with no listed tools whose calls are answered by {@code call}.
+	 * A tool repository with no listed tools that finds a tool of any name and answers
+	 * its calls with {@code call}.
 	 */
 	public static McpAsyncToolRepository tools(
 			BiFunction<McpRequestContext, CallToolRequest, Mono<McpAsyncResponse<CallToolOutcome>>> call) {
@@ -70,6 +79,11 @@ public final class ModernTestFixtures {
 			@Override
 			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
 				return Mono.just(ToolsPage.of(List.of()));
+			}
+
+			@Override
+			public Mono<Tool> find(McpRequestContext ctx, String name) {
+				return Mono.just(Tool.builder(name, ToolsUtils.EMPTY_JSON_SCHEMA).build());
 			}
 
 			@Override
@@ -81,7 +95,22 @@ public final class ModernTestFixtures {
 
 	/** A tool repository with no tools. */
 	public static McpAsyncToolRepository emptyTools() {
-		return tools((ctx, request) -> Mono.error(McpException.invalidParams("Unknown tool: " + request.name())));
+		return new McpAsyncToolRepository() {
+			@Override
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ToolsPage.of(List.of()));
+			}
+
+			@Override
+			public Mono<Tool> find(McpRequestContext ctx, String name) {
+				return Mono.empty();
+			}
+
+			@Override
+			public Mono<McpAsyncResponse<CallToolOutcome>> call(McpRequestContext ctx, CallToolRequest request) {
+				return Mono.error(McpException.invalidParams("Unknown tool: " + request.name()));
+			}
+		};
 	}
 
 }

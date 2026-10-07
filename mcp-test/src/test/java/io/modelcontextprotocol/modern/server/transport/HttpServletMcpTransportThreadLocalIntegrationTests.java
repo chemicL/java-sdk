@@ -116,6 +116,15 @@ class HttpServletMcpTransportThreadLocalIntegrationTests {
 			}
 
 			@Override
+			public Tool find(McpRequestContext ctx, String name) {
+				return list(ctx, null).tools()
+					.stream()
+					.filter(tool -> tool.name().equals(name))
+					.findFirst()
+					.orElse(null);
+			}
+
+			@Override
 			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
 				return switch (request.name()) {
 					case "whoami" -> McpSyncResponse.result(text(whoami()));

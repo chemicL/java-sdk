@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.PERMISSIVE_VALIDATOR;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
@@ -43,7 +44,8 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L,
+					CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -83,7 +85,8 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L,
+					CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -113,7 +116,8 @@ class SubscriptionsFeatureTests {
 		McpServer server = McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L,
+					CacheScope.PRIVATE))
 			.subscriptions(feed)
 			.build();
 
@@ -263,7 +267,8 @@ class SubscriptionsFeatureTests {
 		return McpServer.builder()
 			.serverInfo(SERVER_INFO)
 			.jsonMapper(new GsonMcpJsonMapper())
-			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE))
+			.feature(ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L,
+					CacheScope.PRIVATE))
 			.subscriptions(publisher)
 			.build();
 	}

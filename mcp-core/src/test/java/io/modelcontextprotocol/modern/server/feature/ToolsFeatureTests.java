@@ -4,14 +4,18 @@
 
 package io.modelcontextprotocol.modern.server.feature;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.json.schema.JsonSchemaValidator;
+import io.modelcontextprotocol.json.schema.JsonSchemaValidator.ValidationResponse;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCMessage;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCNotification;
 import io.modelcontextprotocol.modern.JsonRpc.JSONRPCRequest;
@@ -39,6 +43,7 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static io.modelcontextprotocol.modern.server.ModernTestFixtures.PERMISSIVE_VALIDATOR;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.SERVER_INFO;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.emptyTools;
 import static io.modelcontextprotocol.modern.server.ModernTestFixtures.meta;
@@ -51,11 +56,11 @@ class ToolsFeatureTests {
 	private static final Tool ECHO_TOOL = Tool.builder("echo", ToolsUtils.EMPTY_JSON_SCHEMA).build();
 
 	private static McpFeature tools(McpAsyncToolRepository repository) {
-		return ToolsFeature.ofAsync(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
+		return ToolsFeature.ofAsync(repository, new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE);
 	}
 
 	private static McpFeature tools(McpSyncToolRepository repository) {
-		return ToolsFeature.ofSync(repository, new GsonMcpJsonMapper(), 0L, CacheScope.PRIVATE);
+		return ToolsFeature.ofSync(repository, new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, 0L, CacheScope.PRIVATE);
 	}
 
 	private static McpServer.Builder baseBuilder() {
@@ -86,10 +91,110 @@ class ToolsFeatureTests {
 			.verifyComplete();
 	}
 
+	private static final Map<String, Object> OUTPUT_SCHEMA = Map.of("type", "object", "required", List.of("n"));
+
+	private static final Tool STRUCTURED_TOOL = Tool.builder("structured", ToolsUtils.EMPTY_JSON_SCHEMA)
+		.outputSchema(OUTPUT_SCHEMA)
+		.build();
+
+	private static final JSONRPCRequest CALL_STRUCTURED = new JSONRPCRequest("tools/call", 1,
+			Map.of("_meta", meta(), "name", "structured"));
+
+	private static JsonSchemaValidator rejecting(Map<String, Object> rejected) {
+		return (schema, content) -> schema.equals(rejected) ? ValidationResponse.asInvalid("rejected")
+				: ValidationResponse.asValid(null);
+	}
+
+	private static McpServer structuredServer(JsonSchemaValidator validator,
+			McpAsyncResponse<CallToolOutcome> response) {
+		McpAsyncToolRepository repo = new McpAsyncToolRepository() {
+			@Override
+			public Mono<ToolsPage> list(McpRequestContext ctx, String cursor) {
+				return Mono.just(ToolsPage.of(List.of(STRUCTURED_TOOL)));
+			}
+
+			@Override
+			public Mono<Tool> find(McpRequestContext ctx, String name) {
+				return Mono.just(STRUCTURED_TOOL);
+			}
+
+			@Override
+			public Mono<McpAsyncResponse<CallToolOutcome>> call(McpRequestContext ctx, CallToolRequest request) {
+				return Mono.just(response);
+			}
+		};
+		return baseBuilder()
+			.feature(ToolsFeature.ofAsync(repo, new GsonMcpJsonMapper(), validator, 0L, CacheScope.PRIVATE))
+			.build();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void invalidArgumentsAreAToolExecutionError() {
+		AtomicBoolean called = new AtomicBoolean();
+		McpAsyncToolRepository repo = ModernTestFixtures.tools((ctx, req) -> {
+			called.set(true);
+			return Mono.just(McpAsyncResponse.result(CallToolResult.builder().build()));
+		});
+		McpServer server = baseBuilder()
+			.feature(ToolsFeature.ofAsync(repo, new GsonMcpJsonMapper(), rejecting(ToolsUtils.EMPTY_JSON_SCHEMA), 0L,
+					CacheScope.PRIVATE))
+			.build();
+		JSONRPCRequest request = new JSONRPCRequest("tools/call", 1, Map.of("_meta", meta(), "name", "echo"));
+
+		JSONRPCResponse response = respond(server, request).block();
+
+		assertThat(((Map<String, Object>) response.result()).get("isError")).isEqualTo(true);
+		assertThat(greetingText(response)).isEqualTo("Invalid arguments: rejected");
+		assertThat(called).isFalse();
+	}
+
+	@Test
+	void nonconformingStructuredContentIsAnInternalError() {
+		McpServer server = structuredServer(rejecting(OUTPUT_SCHEMA),
+				McpAsyncResponse.result(CallToolResult.builder().structuredContent(Map.of("n", 1)).build()));
+
+		JSONRPCResponse response = respond(server, CALL_STRUCTURED).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+	}
+
+	@Test
+	void missingStructuredContentIsAnInternalError() {
+		McpServer server = structuredServer(PERMISSIVE_VALIDATOR,
+				McpAsyncResponse.result(CallToolResult.builder().build()));
+
+		JSONRPCResponse response = respond(server, CALL_STRUCTURED).block();
+
+		assertThat(response.error().code()).isEqualTo(ErrorCodes.INTERNAL_ERROR);
+	}
+
+	@Test
+	void streamingResultIsCheckedAgainstOutputSchema() {
+		McpServer server = structuredServer(rejecting(OUTPUT_SCHEMA), McpAsyncResponse
+			.streaming(notifier -> Mono.just(CallToolResult.builder().structuredContent(Map.of("n", 1)).build())));
+
+		List<JSONRPCMessage> messages = callStreaming(server.handle(McpTransportContext.EMPTY, CALL_STRUCTURED),
+				new ArrayList<>());
+
+		assertThat(((JSONRPCResponse) messages.get(messages.size() - 1)).error().code())
+			.isEqualTo(ErrorCodes.INTERNAL_ERROR);
+	}
+
+	@Test
+	void structuredContentGetsATextFallback() {
+		McpServer server = structuredServer(PERMISSIVE_VALIDATOR,
+				McpAsyncResponse.result(CallToolResult.builder().structuredContent(Map.of("n", 1)).build()));
+
+		JSONRPCResponse response = respond(server, CALL_STRUCTURED).block();
+
+		assertThat(greetingText(response)).isEqualTo("{\"n\":1}");
+	}
+
 	@Test
 	void negativeTtlIsRejected() {
-		assertThatIllegalArgumentException()
-			.isThrownBy(() -> ToolsFeature.ofAsync(emptyTools(), new GsonMcpJsonMapper(), -1L, CacheScope.PRIVATE));
+		assertThatIllegalArgumentException().isThrownBy(() -> ToolsFeature.ofAsync(emptyTools(),
+				new GsonMcpJsonMapper(), PERMISSIVE_VALIDATOR, -1L, CacheScope.PRIVATE));
 		assertThatIllegalArgumentException().isThrownBy(() -> new ToolsPage(List.of(), null, -1L, null));
 	}
 
@@ -123,6 +228,11 @@ class ToolsFeatureTests {
 			}
 
 			@Override
+			public Tool find(McpRequestContext ctx, String name) {
+				return ECHO_TOOL;
+			}
+
+			@Override
 			public McpSyncResponse<CallToolOutcome> call(McpRequestContext ctx, CallToolRequest request) {
 				handlerThread.set(Thread.currentThread().getName());
 				return McpSyncResponse.result(greeting(principal.apply(ctx)));
@@ -139,6 +249,11 @@ class ToolsFeatureTests {
 			@Override
 			public ToolsPage list(McpRequestContext ctx, String cursor) {
 				return ToolsPage.of(List.of(ECHO_TOOL));
+			}
+
+			@Override
+			public Tool find(McpRequestContext ctx, String name) {
+				return ECHO_TOOL;
 			}
 
 			@Override
@@ -215,6 +330,11 @@ class ToolsFeatureTests {
 			public ToolsPage list(McpRequestContext ctx, String cursor) {
 				return ToolsPage
 					.of("admin".equals(PRINCIPAL.get()) ? List.of(ECHO_TOOL, ADMIN_TOOL) : List.of(ECHO_TOOL));
+			}
+
+			@Override
+			public Tool find(McpRequestContext ctx, String name) {
+				return null;
 			}
 
 			@Override
