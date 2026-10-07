@@ -48,6 +48,8 @@ public class StdioMcpTransport {
 
 	private static final Logger logger = LoggerFactory.getLogger(StdioMcpTransport.class);
 
+	private static final int DEFAULT_INPUT_MAX_SIZE = 16 * 1024 * 1024;
+
 	private final McpRequestManager requestManager;
 
 	private final McpJsonMapper jsonMapper;
@@ -55,6 +57,8 @@ public class StdioMcpTransport {
 	private final InputStream in;
 
 	private final OutputStream out;
+
+	private final int inputMaxSize;
 
 	// Daemon threads: a read blocked on System.in cannot be interrupted, so the reader
 	// could outlive close. The transport's lifetime is start()'s Mono instead.
@@ -80,14 +84,25 @@ public class StdioMcpTransport {
 
 	public StdioMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, InputStream in,
 			OutputStream out) {
+		this(requestManager, jsonMapper, in, out, DEFAULT_INPUT_MAX_SIZE);
+	}
+
+	/**
+	 * @param inputMaxSize the maximum number of characters in one inbound message; longer
+	 * messages are dropped. The other constructors use 16M.
+	 */
+	public StdioMcpTransport(McpRequestManager requestManager, McpJsonMapper jsonMapper, InputStream in,
+			OutputStream out, int inputMaxSize) {
 		Assert.notNull(requestManager, "requestManager must not be null");
 		Assert.notNull(jsonMapper, "jsonMapper must not be null");
 		Assert.notNull(in, "in must not be null");
 		Assert.notNull(out, "out must not be null");
+		Assert.isTrue(inputMaxSize > 0, "inputMaxSize must be positive");
 		this.requestManager = requestManager;
 		this.jsonMapper = jsonMapper;
 		this.in = in;
 		this.out = out;
+		this.inputMaxSize = inputMaxSize;
 	}
 
 	/**
@@ -138,7 +153,7 @@ public class StdioMcpTransport {
 		try (BufferedReader reader = new BufferedReader(new InputStreamReader(this.in, StandardCharsets.UTF_8))) {
 			String line;
 			// Checked after each read: a line that arrives once closing is dropped.
-			while ((line = reader.readLine()) != null && !this.closing.get()) {
+			while ((line = readLine(reader)) != null && !this.closing.get()) {
 				if (line.isBlank()) {
 					continue;
 				}
@@ -162,6 +177,33 @@ public class StdioMcpTransport {
 		finally {
 			this.closeGracefully().subscribe();
 		}
+	}
+
+	// BufferedReader#readLine buffers a line of any length; a peer that never sends a
+	// newline would exhaust the heap. Terminators are the same: \n, \r or \r\n. Peeking
+	// past a \r would block until the client's next message, so \r\n reads as a line
+	// followed by a blank one, which the read loop skips.
+	private String readLine(BufferedReader reader) throws IOException {
+		StringBuilder line = new StringBuilder();
+		boolean tooLong = false;
+		int c;
+		while ((c = reader.read()) != -1 && c != '\n' && c != '\r') {
+			if (tooLong) {
+				continue;
+			}
+			if (line.length() == this.inputMaxSize) {
+				tooLong = true;
+				line = new StringBuilder();
+				continue;
+			}
+			line.append((char) c);
+		}
+		if (tooLong) {
+			logger.warn("Dropping inbound message longer than {} characters", this.inputMaxSize);
+			// Blank, so the read loop skips it and keeps serving.
+			return "";
+		}
+		return c == -1 && line.isEmpty() ? null : line.toString();
 	}
 
 	private void handleLine(String line) {

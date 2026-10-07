@@ -84,13 +84,19 @@ class StdioMcpTransportTests {
 
 	private void start(McpRequestManager manager, McpJsonMapper serverMapper, UnaryOperator<OutputStream> wrapOut)
 			throws IOException {
+		start(manager, serverMapper, wrapOut, 16 * 1024 * 1024);
+	}
+
+	private void start(McpRequestManager manager, McpJsonMapper serverMapper, UnaryOperator<OutputStream> wrapOut,
+			int inputMaxSize) throws IOException {
 		this.clientOut = new PipedOutputStream();
 		this.serverIn = new PipedInputStream(this.clientOut);
 		PipedInputStream clientIn = new PipedInputStream();
 		this.serverOut = new PipedOutputStream(clientIn);
 		this.serverResponses = new BufferedReader(new InputStreamReader(clientIn, StandardCharsets.UTF_8));
 
-		this.transport = new StdioMcpTransport(manager, serverMapper, this.serverIn, wrapOut.apply(this.serverOut));
+		this.transport = new StdioMcpTransport(manager, serverMapper, this.serverIn, wrapOut.apply(this.serverOut),
+				inputMaxSize);
 		this.transport.start().doFinally(ignored -> done.tryEmitEmpty()).subscribe();
 	}
 
@@ -605,6 +611,62 @@ class StdioMcpTransportTests {
 		Map<String, Object> retried = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
 		assertThat(((Number) retried.get("id")).intValue()).isEqualTo(9);
 		assertThat(retried.get("error")).isNull();
+	}
+
+	@Test
+	void messageLongerThanTheLimitIsDroppedAndTheTransportKeepsServing() throws Exception {
+		McpRequestManager manager = managerOf((transportContext, request) -> Mono
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
+		start(manager, this.jsonMapper, UnaryOperator.identity(), 1024);
+
+		sendRaw("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"pad\":\"" + "x".repeat(2048)
+				+ "\"}}");
+		send("tools/list", 2, Map.of("_meta", meta()));
+
+		Map<String, Object> response = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) response.get("id")).intValue()).isEqualTo(2);
+		assertThat(response.get("error")).isNull();
+	}
+
+	@Test
+	void messageOfExactlyTheLimitIsHandled() throws Exception {
+		McpRequestManager manager = managerOf((transportContext, request) -> Mono
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
+		String request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}";
+		start(manager, this.jsonMapper, UnaryOperator.identity(), request.length());
+
+		sendRaw(request);
+
+		Map<String, Object> response = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+		assertThat(((Number) response.get("id")).intValue()).isEqualTo(3);
+	}
+
+	@Test
+	void carriageReturnTerminatesAMessage() throws Exception {
+		McpRequestManager manager = managerOf((transportContext, request) -> Mono
+			.just(McpTransportResponse.result(JSONRPCResponse.result(request.id(), Map.of()))));
+		start(manager);
+
+		this.clientOut.write(("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}\r\n"
+				+ "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\r")
+			.getBytes(StandardCharsets.UTF_8));
+		this.clientOut.flush();
+
+		Set<Integer> ids = new HashSet<>();
+		for (int i = 0; i < 2; i++) {
+			Map<String, Object> response = this.jsonMapper.readValue(readLineWithTimeout(), Map.class);
+			assertThat(response.get("error")).isNull();
+			ids.add(((Number) response.get("id")).intValue());
+		}
+		assertThat(ids).containsExactlyInAnyOrder(1, 2);
+	}
+
+	@Test
+	void nonPositiveInputMaxSizeIsRejected() {
+		assertThatThrownBy(() -> new StdioMcpTransport(managerOf((transportContext, request) -> Mono.never()),
+				this.jsonMapper, System.in, System.out, 0))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessageContaining("inputMaxSize must be positive");
 	}
 
 	private String readLineWithTimeout() throws IOException {
